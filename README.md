@@ -4,9 +4,13 @@
 
 # WorkBuddy Expert Bridge
 
-**让支持 Agent Skills、能访问本地文件的 AI 宿主，安全发现、推荐并复用本机 WorkBuddy 的专家与专家团。**
+**让 Codex、Cursor、Claude Code、VS Code 等 WorkBuddy 之外的开发工具，调用你电脑上已经安装的 WorkBuddy 专家与专家团。**
 
-不用翻完整个专家市场，也不用先记住专家名称。直接说清楚你要完成什么，Skill 会给出最多 3 个合适候选，并说明为什么推荐、属于哪个分类、是专家还是专家团、当前是否能在本机使用，以及排名证据是否可靠。
+WorkBuddy 负责提供、安装和管理专家；这个 Skill 负责把这些专家能力桥接到其他本地 AI 开发工具。你可以直接复用专家和专家团已经沉淀的角色分工、判断框架与工作流，不必让每个工具都从通用提示开始、重新造一遍轮子。
+
+> WorkBuddy 安装与管理专家 → 本 Skill 连接本机专家 → 其他开发工具调用并复用成熟工作流
+
+你既可以点名使用某个已安装专家，也可以只说清楚要完成什么，让 Skill 给出最多 3 个合适候选，并说明为什么推荐、属于哪个分类、是专家还是专家团、当前是否能在本机使用，以及排名证据是否可靠。
 
 ## 你会得到什么
 
@@ -41,7 +45,7 @@ npx skills add xiaojinlucky/workbuddy-expert-bridge --skill workbuddy-expert-bri
 ## 直接这样用
 
 ```text
-帮我为一个面向科研用户的 GitHub 项目推荐最合适的 WorkBuddy 专家团，并说明本地可用性和排名证据。
+请调用我电脑上已经安装的 WorkBuddy 专家团，为这个 GitHub 项目选择一套成熟的工作流；先告诉我推荐对象、本地可用性和排名证据，再开始执行。
 ```
 
 你也可以追加偏好：
@@ -70,7 +74,7 @@ npx skills add xiaojinlucky/workbuddy-expert-bridge --skill workbuddy-expert-bri
 
 | 环境 | 状态 |
 | --- | --- |
-| 能加载 Agent Skills 且可读取本地文件的宿主 | 支持 |
+| Codex、Cursor、Claude Code、VS Code 等本地 AI 开发工具 | 能加载 Agent Skills 并读取本机 WorkBuddy 文件时可用 |
 | Windows | 已真实运行验证 |
 | macOS / Linux | 已完成静态兼容审查，尚未真实运行 |
 | 普通网页或移动端 AI 对话服务 | 默认无法直接读取本机 WorkBuddy |
@@ -79,7 +83,7 @@ npx skills add xiaojinlucky/workbuddy-expert-bridge --skill workbuddy-expert-bri
 
 ## 适用边界
 
-这个 Skill 负责发现、推荐和安全复用已有的 WorkBuddy 专家；不负责创建、修改、注册、打包、安装或下载 WorkBuddy 专家。
+这个 Skill 是 WorkBuddy 与其他开发工具之间的本地桥梁，不是 WorkBuddy 的替代品。专家仍由 WorkBuddy 提供、安装和管理；本 Skill 只负责发现、推荐和安全复用已有专家，不负责创建、修改、注册、打包、安装或下载 WorkBuddy 专家。
 
 当前公开版本已通过 **24 项自动化测试**。未验证的平台能力和无法核验的平台排名都会保持明确，不会被包装成已支持或已确认。
 
