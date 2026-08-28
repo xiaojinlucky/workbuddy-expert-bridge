@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
+  <title id="title">WorkBuddy 专家到本地 AI 宿主的安全桥接布局源</title>
+  <desc id="desc">左侧分类专家卡片经中央带护栏的桥连接到右侧四个本地 AI 宿主；中央人物区域用于放置保留头像辨识特征的编辑插画。</desc>
+  <rect width="1600" height="720" fill="#F0EFEB"/>
+  <g id="paper-texture" fill="#F2D17E" opacity=".12">
+    <circle cx="110" cy="90" r="48"/><circle cx="1450" cy="615" r="62"/>
+  </g>
+  <g id="expert-cards" transform="translate(70 150)">
+    <rect width="390" height="410" rx="28" fill="#ACAD79" opacity=".44"/>
+    <g fill="#F0EFEB" stroke="#58402E" stroke-width="4">
+      <rect x="28" y="32" width="150" height="142" rx="18"/><rect x="210" y="32" width="150" height="142" rx="18"/>
+      <rect x="28" y="208" width="150" height="142" rx="18"/><rect x="210" y="208" width="150" height="142" rx="18"/>
+    </g>
+    <g fill="#77835A">
+      <circle cx="103" cy="80" r="22"/><path d="M66 143c4-33 70-33 74 0z"/>
+      <circle cx="267" cy="78" r="17"/><circle cx="305" cy="78" r="17"/><path d="M238 142c3-28 56-28 60 0z"/><path d="M275 142c3-28 56-28 60 0z"/>
+      <path d="M76 252h54l24 24v44H76z"/><path d="M130 252v24h24" fill="none" stroke="#77835A" stroke-width="8"/>
+      <path d="M261 250l18 18-48 48-20 4 4-20zM286 238l15 15-13 13-15-15z"/>
+    </g>
+  </g>
+  <g id="bridge" fill="none" stroke="#43593B" stroke-linecap="round">
+    <path d="M430 476 Q800 155 1170 476" stroke-width="58"/>
+    <path d="M430 435 Q800 114 1170 435" stroke-width="12"/>
+    <path d="M470 452v-94M555 389v-90M650 326v-82M750 282v-80M850 282v-80M950 326v-82M1045 389v-90M1130 452v-94" stroke-width="12"/>
+  </g>
+  <g id="evidence-tickets" fill="#D4A017" stroke="#58402E" stroke-width="3">
+    <rect x="590" y="295" width="92" height="52" rx="8" transform="rotate(-10 636 321)"/>
+    <rect x="910" y="285" width="92" height="52" rx="8" transform="rotate(11 956 311)"/>
+  </g>
+  <g id="portrait-reserved-area" transform="translate(675 265)">
+    <path d="M72 330c-54-98-40-230 28-286 65-54 154-34 193 39 44 82 19 194-27 247z" fill="#F2D17E" opacity=".42" stroke="#58402E" stroke-width="4" stroke-dasharray="12 12"/>
+    <circle cx="172" cy="122" r="58" fill="#929960" opacity=".55"/>
+    <path d="M104 318c0-104 31-152 69-152s70 48 70 152z" fill="#77835A" opacity=".58"/>
+  </g>
+  <g id="host-cards" transform="translate(1195 150)">
+    <rect width="335" height="410" rx="28" fill="#F2D17E" opacity=".34"/>
+    <g fill="#43593B" stroke="#58402E" stroke-width="4">
+      <rect x="28" y="34" width="124" height="142" rx="18"/><rect x="182" y="34" width="124" height="142" rx="18"/>
+      <rect x="28" y="210" width="124" height="142" rx="18"/><rect x="182" y="210" width="124" height="142" rx="18"/>
+    </g>
+    <g fill="none" stroke="#F0EFEB" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M60 92l22 22-22 22M96 136h24M214 92l22 22-22 22M250 136h24"/>
+      <path d="M60 268l22 22-22 22M96 312h24M214 268l22 22-22 22M250 312h24"/>
+    </g>
+  </g>
+  <path id="flow-line" d="M350 112C620 55 980 55 1260 112" fill="none" stroke="#D4A017" stroke-width="7" stroke-dasharray="16 14"/>
+</svg>
