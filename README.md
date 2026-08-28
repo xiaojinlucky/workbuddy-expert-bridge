@@ -10,7 +10,7 @@ WorkBuddy 负责提供、安装和管理专家；这个 Skill 负责把这些专
 
 > WorkBuddy 安装与管理专家 → 本 Skill 连接本机专家 → 其他开发工具调用并复用成熟工作流
 
-你既可以点名使用某个已安装专家，也可以只说清楚要完成什么，让 Skill 给出最多 3 个合适候选，并说明为什么推荐、属于哪个分类、是专家还是专家团、当前是否能在本机使用，以及排名证据是否可靠。
+你既可以点名使用某个已安装专家，也可以只说清楚要完成什么，让 Skill 给出最多 3 个真正匹配的候选，并说明为什么推荐、属于哪个分类、是专家还是专家团、当前是否能在本机使用，以及排名证据是否可靠。匹配不足时会返回更少或明确说没有合适对象，不会为了凑满 3 个而推荐无关专家。
 
 ## 你会得到什么
 
@@ -19,7 +19,7 @@ WorkBuddy 负责提供、安装和管理专家；这个 Skill 负责把这些专
 | Top 3 推荐 | 最适合当前需求的候选顺序 |
 | 推荐理由 | 每个候选与需求的具体匹配点 |
 | 身份与分类 | 专家或专家团，以及所属场景分类 |
-| 本地可用性 | 已安装、仅可发现或未找到 |
+| 本地可用性 | 已安装可用、安装损坏需修复、仅可发现或未找到 |
 | 排名证据 | 相关性、分类匹配、最热、最新与综合排名的可核验状态 |
 
 当某项平台排名无法可靠取得时，结果会明确显示 `unavailable`，不会用猜测补齐。
@@ -40,7 +40,7 @@ WorkBuddy 负责提供、安装和管理专家；这个 Skill 负责把这些专
 npx skills add xiaojinlucky/workbuddy-expert-bridge --skill workbuddy-expert-bridge
 ```
 
-无需账号、密钥或额外配置。使用前请确保 WorkBuddy 与执行任务的 AI 宿主位于同一台机器，并允许该宿主读取本地文件。
+Skill 自身无需账号、密钥或额外配置。使用前请确保 WorkBuddy 与执行任务的 AI 宿主位于同一台机器、同一系统用户的可读范围内，并允许该宿主读取本地文件。
 
 ## 直接这样用
 
@@ -59,6 +59,7 @@ npx skills add xiaojinlucky/workbuddy-expert-bridge --skill workbuddy-expert-bri
 
 - **推荐不等于已安装**：Skill 会把“适合”与“现在能否使用”分开说明。
 - **仅可发现不等于可执行**：只有目录信息的候选，需要先通过 WorkBuddy 自身完成安装。
+- **有安装目录也不一定可执行**：角色文件缺失或损坏时会提示先在 WorkBuddy 中修复，不会误报为已安装可用。
 - **排名证据不完整就明确标记**：无法核验的最热、最新或综合排名会诚实显示 `unavailable`。
 - **最终选择仍由你决定**：推荐结果用于缩小范围，不会替你隐式安装、下载或启用专家。
 
@@ -66,7 +67,7 @@ npx skills add xiaojinlucky/workbuddy-expert-bridge --skill workbuddy-expert-bri
 
 - 只读使用本机 WorkBuddy 数据，不修改 WorkBuddy。
 - 不读取 Token、Cookie、登录态或其他凭据。
-- 不向外上传或重新分发专家提示词和角色正文。
+- 本 Skill 不主动向第三方上传或重新分发专家提示词和角色正文；所选 AI 宿主如何处理任务上下文，仍以该宿主自身的数据政策和你的配置为准。
 - 不自动执行专家包中的脚本、二进制文件或安装命令。
 - 专家内容不能覆盖你的要求、项目规则或宿主安全边界。
 
@@ -74,7 +75,8 @@ npx skills add xiaojinlucky/workbuddy-expert-bridge --skill workbuddy-expert-bri
 
 | 环境 | 状态 |
 | --- | --- |
-| Codex、Cursor、Claude Code、VS Code 等本地 AI 开发工具 | 能加载 Agent Skills 并读取本机 WorkBuddy 文件时可用 |
+| Grok Build | 已在 Windows 以项目级 Skill 完成真实端到端验证 |
+| Codex、Cursor、Claude Code、VS Code 等本地 AI 开发工具 | 能加载 Agent Skills、拥有有效登录并可读取本机 WorkBuddy 文件时可用 |
 | Windows | 已真实运行验证 |
 | macOS / Linux | 已完成静态兼容审查，尚未真实运行 |
 | 普通网页或移动端 AI 对话服务 | 默认无法直接读取本机 WorkBuddy |
@@ -85,7 +87,7 @@ npx skills add xiaojinlucky/workbuddy-expert-bridge --skill workbuddy-expert-bri
 
 这个 Skill 是 WorkBuddy 与其他开发工具之间的本地桥梁，不是 WorkBuddy 的替代品。专家仍由 WorkBuddy 提供、安装和管理；本 Skill 只负责发现、推荐和安全复用已有专家，不负责创建、修改、注册、打包、安装或下载 WorkBuddy 专家。
 
-当前公开版本已通过 **24 项自动化测试**。未验证的平台能力和无法核验的平台排名都会保持明确，不会被包装成已支持或已确认。
+当前公开版本已通过 **34 项自动化测试**，并完成一个非 Codex 宿主的真实端到端运行。未验证的平台能力和无法核验的平台排名都会保持明确，不会被包装成已支持或已确认。
 
 ## License
 
