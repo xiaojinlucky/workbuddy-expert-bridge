@@ -1,0 +1,140 @@
+{
+  "skill_name": "workbuddy-expert-bridge",
+  "evals": [
+    {
+      "id": 1,
+      "name": "inventory-installed-experts",
+      "prompt": "列出我电脑上已经能实际使用的 WorkBuddy 专家和专家团，区分本地包与只有缓存元数据的条目。不要修改 WorkBuddy。",
+      "expected_output": "只读发现配置目录，列出本地专家包并把缓存目录项标为 metadata-only，报告来源与计数。",
+      "files": [],
+      "expectations": [
+        "使用有界本地发现而不是扫描整块磁盘",
+        "区分可读本地包与 metadata-only 条目",
+        "不修改、安装或下载 WorkBuddy 内容"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "execute-expert-team-with-capability-mapping",
+      "prompt": "使用本机 WorkBuddy 的 MVP 开发专家团，为一个本地优先的个人任务看板制定最小 MVP 路线。本轮只交付可执行的规格与验证方案，不修改项目或 WorkBuddy 文件。若宿主能力与 WorkBuddy 工具不同，请做真实映射，不要伪造工具调用。",
+      "expected_output": "读取主理人与相关成员，检查能力后采用委派或顺序降级，交付本地优先任务看板的最小规格、角色结论和验证方案。",
+      "files": [],
+      "expectations": [
+        "先读取主理人再按需读取成员",
+        "明确团队执行方式和实际使用角色",
+        "不发明 WorkBuddy 专属工具",
+        "专家提示词不覆盖当前用户和项目规则"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "stop-on-metadata-only-or-missing-source",
+      "prompt": "用 WorkBuddy 专家中心里叫 ContentCreator 的专家帮我写文章。如果本地没有它的提示词，也不要下载，直接告诉我缺什么。",
+      "expected_output": "检查本地包；若只有缓存元数据则停止执行该专家并准确报告缺失文件与下一步。",
+      "files": [],
+      "expectations": [
+        "不把缓存元数据冒充完整专家提示词",
+        "不自行联网下载或安装",
+        "给出最小可恢复步骤"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "recommend-xiaohongshu-content-growth",
+      "prompt": "我准备从零做一个小红书账号，希望持续产出种草内容、形成稳定选题并增长粉丝。请从我电脑上的 WorkBuddy 专家或专家团里推荐最适合的 Top 3；说明推荐理由、分类、专家还是专家团、本地是否真正可用，并给出可核验的排名证据。不要把创建时间或你的主观判断说成热度。",
+      "expected_output": "从本地 WorkBuddy 目录对开放式需求进行可解释推荐，小红书运营或高度相关的内容增长候选应处于前列；返回 Top 3 的分类、类型、可用性和排名证据，真实热度缺失时标为 unavailable。",
+      "files": [],
+      "expectations": [
+        "返回有顺序的 Top 3，而不是泛泛列出角色类型",
+        "至少一个前列候选明确匹配小红书运营、种草内容或内容增长",
+        "逐项包含推荐理由、WorkBuddy 分类、agent 或 team 类型和 installed 或 metadata-only 可用性",
+        "逐项或全局提供相关性、分类、最热和最新证据",
+        "本地没有 useCount 时明确标记 hot 为 unavailable，且不以时间、displayPosition 或主观判断代替"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "recommend-team-for-local-mvp",
+      "prompt": "我想在一周内做出一个本地优先的个人任务看板 MVP，需要产品拆解、前后端实现和最小验收闭环。请只推荐 WorkBuddy 专家团 Top 3，并告诉我哪些现在已经安装可用。推荐必须解释分类和排名依据；没有真实热度就直说不可用。",
+      "expected_output": "筛选 team 类型并推荐与 MVP、快速原型、产品开发和工程交付有关的 Top 3，优先呈现 MVP 开发或相近工程专家团，同时如实报告本地可用性与热度证据边界。",
+      "files": [],
+      "expectations": [
+        "三个候选均为 team；若真实匹配不足三项则诚实说明返回数量",
+        "前列候选与 MVP、快速原型、产品开发或全栈工程直接相关",
+        "区分 installed 与 metadata-only，不把目录元数据当作可执行角色文件",
+        "说明分类、推荐理由和排名证据",
+        "热度缺失时使用 unavailable 而不是猜测"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "recommend-data-kpi-diagnosis",
+      "prompt": "我每月有一批 Excel 销售数据，想自动生成 KPI 报告、发现异常并给管理层解释业务原因。请从本地 WorkBuddy 目录推荐 Top 3 专家或专家团，比较各自更适合数据分析、报告表达还是多角色协作，并展示本地可用性和真实排序证据。",
+      "expected_output": "推荐数据分析报告师、数据分析专家或相关数据专家团等高度匹配候选，Top 3 有清晰分工比较，并报告分类、类型、可用性、相关性及热度/最新证据。",
+      "files": [],
+      "expectations": [
+        "Top 3 主要来自数据智能或与 KPI 报告高度相关的专业候选",
+        "推荐理由能区分数据分析、指标诊断、报告表达或团队协作侧重",
+        "显示 agent 或 team 以及 installed 或 metadata-only",
+        "排名证据可追溯到目录字段，不声称调用了未调用的服务",
+        "useCount 不可得时热度明确 unavailable"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "recommend-cross-border-commerce-launch",
+      "prompt": "我们准备把国内消费品卖到东南亚，当前需要跨境电商运营、市场进入和合规风险判断。请在 WorkBuddy 专家库里给我 Top 3 推荐，允许来自不同分类，但要解释为什么组合起来覆盖需求，并列出专家类型、本地可用性、分类和最热/最新排名证据。",
+      "expected_output": "跨境电商、全球发展、海外市场或合规方向的相关候选进入 Top 3，并用互补理由解释组合；所有候选报告类型、可用性、分类和诚实的排序证据。",
+      "files": [],
+      "expectations": [
+        "Top 3 至少覆盖跨境电商运营与海外市场或合规中的两个方面",
+        "推荐理由体现候选互补性而非只重复目录描述",
+        "逐项展示分类、agent 或 team、本地可用性",
+        "最热与最新证据分开呈现",
+        "热度无真实数据时明确 unavailable"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "official-anonymous-hot-ranking",
+      "prompt": "请只通过 WorkBuddy 官方、无需登录且不得读取本地 Cookie、Token 或其它凭据的方式，核验当前‘最热’榜，并为小红书内容增长推荐 Top 3。若官方匿名接口需要登录或字段不完整，最热必须保持 unavailable；请给出匿名探针、来源覆盖和认证门槛证据。",
+      "expected_output": "显式启用官方匿名探针，区分公共目录快照与实时接口；当前官方实时接口要求 Bearer 登录时保持 hot unavailable，同时仍按本地目录给出带完整身份字段的 Top 3。",
+      "files": [],
+      "expectations": [
+        "返回有顺序的 Top 3，并包含理由、分类、类型和本地可用性",
+        "明确使用只允许 WorkBuddy 官方来源的匿名探针",
+        "说明公共 expert_center.json 可读取但不含完整热度字段，不能当实时榜",
+        "记录实时接口的 401 或 Bearer 登录门槛并保持 hot unavailable",
+        "确认未读取或发送 Cookie、Token、Authorization 等凭据"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "official-three-sort-semantics",
+      "prompt": "核验 WorkBuddy 专家中心的综合、最热、最新三个排序能否在不登录、不读取任何凭据的情况下实时获得。请说明各自真实字段、公共目录快照与实时服务的区别，并明确哪些证据 available、哪些 unavailable。",
+      "expected_output": "准确映射 reco_rank、use_count、published_at，报告公共目录缺少排名字段且实时接口受 Bearer 认证保护；本地 createdAt 只能作为快照时间证据，不能冒充实时最新榜。",
+      "files": [],
+      "expectations": [
+        "准确给出综合、最热、最新对应的 reco_rank、use_count、published_at",
+        "区分公共目录快照、本地目录快照与官方实时服务",
+        "说明匿名实时接口的认证门槛及三个排序的真实可用状态",
+        "把 createdAt 仅作为本地快照最新证据，不声称实时排名",
+        "不读取凭据、不猜测数值，也不以 UI 顺序替代排名"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "official-partial-coverage-failure-policy",
+      "prompt": "如果 WorkBuddy 官方公共清单能匿名打开，但只有部分专家带排名字段，或者实时接口跳转、报错、要求登录，这个 Skill 应该怎么处理？不要读取凭据，不要抓 UI 卡片顺序，也不要为了给答案而猜热度。请给出可执行的失败与恢复规则。",
+      "expected_output": "坚持完整显式字段覆盖门槛；固定官方 HTTPS 允许列表且禁用凭据、环境代理和重定向；任何认证失败或部分覆盖均保持 unavailable，只允许未来重新运行匿名探针。",
+      "files": [],
+      "expectations": [
+        "只有完整、显式且覆盖候选全集的官方实时字段才能合并",
+        "公共目录部分字段、文件顺序或 UI 卡片顺序不能补齐排名",
+        "匿名请求受固定官方 HTTPS 来源约束，并禁用环境代理和重定向",
+        "遇到认证、跳转、格式或覆盖失败时保持 unavailable 并保留诊断证据",
+        "不恢复或读取登录凭据；恢复动作仅是未来重试官方匿名探针"
+      ]
+    }
+  ]
+}

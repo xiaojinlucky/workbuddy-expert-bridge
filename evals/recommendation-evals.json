@@ -1,0 +1,61 @@
+{
+  "skill_name": "workbuddy-expert-bridge",
+  "evals": [
+    {
+      "id": 4,
+      "name": "recommend-xiaohongshu-content-growth",
+      "prompt": "我准备从零做一个小红书账号，希望持续产出种草内容、形成稳定选题并增长粉丝。请从我电脑上的 WorkBuddy 专家或专家团里推荐最适合的 Top 3；说明推荐理由、分类、专家还是专家团、本地是否真正可用，并给出可核验的排名证据。不要把创建时间或你的主观判断说成热度。",
+      "expected_output": "从本地 WorkBuddy 目录对开放式需求进行可解释推荐，小红书运营或高度相关的内容增长候选应处于前列；返回 Top 3 的分类、类型、可用性和排名证据，真实热度缺失时标为 unavailable。",
+      "files": [],
+      "expectations": [
+        "返回有顺序的 Top 3，而不是泛泛列出角色类型",
+        "至少一个前列候选明确匹配小红书运营、种草内容或内容增长",
+        "逐项包含推荐理由、WorkBuddy 分类、agent 或 team 类型和 installed 或 metadata-only 可用性",
+        "逐项或全局提供相关性、分类、最热和最新证据",
+        "本地没有 useCount 时明确标记 hot 为 unavailable，且不以时间、displayPosition 或主观判断代替"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "recommend-team-for-local-mvp",
+      "prompt": "我想在一周内做出一个本地优先的个人任务看板 MVP，需要产品拆解、前后端实现和最小验收闭环。请只推荐 WorkBuddy 专家团 Top 3，并告诉我哪些现在已经安装可用。推荐必须解释分类和排名依据；没有真实热度就直说不可用。",
+      "expected_output": "筛选 team 类型并推荐与 MVP、快速原型、产品开发和工程交付有关的 Top 3，优先呈现 MVP 开发或相近工程专家团，同时如实报告本地可用性与热度证据边界。",
+      "files": [],
+      "expectations": [
+        "三个候选均为 team；若真实匹配不足三项则诚实说明返回数量",
+        "前列候选与 MVP、快速原型、产品开发或全栈工程直接相关",
+        "区分 installed 与 metadata-only，不把目录元数据当作可执行角色文件",
+        "说明分类、推荐理由和排名证据",
+        "热度缺失时使用 unavailable 而不是猜测"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "recommend-data-kpi-diagnosis",
+      "prompt": "我每月有一批 Excel 销售数据，想自动生成 KPI 报告、发现异常并给管理层解释业务原因。请从本地 WorkBuddy 目录推荐 Top 3 专家或专家团，比较各自更适合数据分析、报告表达还是多角色协作，并展示本地可用性和真实排序证据。",
+      "expected_output": "推荐数据分析报告师、数据分析专家或相关数据专家团等高度匹配候选，Top 3 有清晰分工比较，并报告分类、类型、可用性、相关性及热度/最新证据。",
+      "files": [],
+      "expectations": [
+        "Top 3 主要来自数据智能或与 KPI 报告高度相关的专业候选",
+        "推荐理由能区分数据分析、指标诊断、报告表达或团队协作侧重",
+        "显示 agent 或 team 以及 installed 或 metadata-only",
+        "排名证据可追溯到目录字段，不声称调用了未调用的服务",
+        "useCount 不可得时热度明确 unavailable"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "recommend-cross-border-commerce-launch",
+      "prompt": "我们准备把国内消费品卖到东南亚，当前需要跨境电商运营、市场进入和合规风险判断。请在 WorkBuddy 专家库里给我 Top 3 推荐，允许来自不同分类，但要解释为什么组合起来覆盖需求，并列出专家类型、本地可用性、分类和最热/最新排名证据。",
+      "expected_output": "跨境电商、全球发展、海外市场或合规方向的相关候选进入 Top 3，并用互补理由解释组合；所有候选报告类型、可用性、分类和诚实的排序证据。",
+      "files": [],
+      "expectations": [
+        "Top 3 至少覆盖跨境电商运营与海外市场或合规中的两个方面",
+        "推荐理由体现候选互补性而非只重复目录描述",
+        "逐项展示分类、agent 或 team、本地可用性",
+        "最热与最新证据分开呈现",
+        "热度无真实数据时明确 unavailable"
+      ]
+    }
+  ]
+}

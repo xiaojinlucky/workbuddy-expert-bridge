@@ -1,0 +1,47 @@
+{
+  "skill_name": "workbuddy-expert-bridge",
+  "evals": [
+    {
+      "id": 8,
+      "name": "official-anonymous-hot-ranking",
+      "prompt": "请只通过 WorkBuddy 官方、无需登录且不得读取本地 Cookie、Token 或其它凭据的方式，核验当前‘最热’榜，并为小红书内容增长推荐 Top 3。若官方匿名接口需要登录或字段不完整，最热必须保持 unavailable；请给出匿名探针、来源覆盖和认证门槛证据。",
+      "expected_output": "显式启用官方匿名探针，区分公共目录快照与实时接口；当前官方实时接口要求 Bearer 登录时保持 hot unavailable，同时仍按本地目录给出带完整身份字段的 Top 3。",
+      "files": [],
+      "expectations": [
+        "返回有顺序的 Top 3，并包含理由、分类、类型和本地可用性",
+        "明确使用只允许 WorkBuddy 官方来源的匿名探针",
+        "说明公共 expert_center.json 可读取但不含完整热度字段，不能当实时榜",
+        "记录实时接口的 401 或 Bearer 登录门槛并保持 hot unavailable",
+        "确认未读取或发送 Cookie、Token、Authorization 等凭据"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "official-three-sort-semantics",
+      "prompt": "核验 WorkBuddy 专家中心的综合、最热、最新三个排序能否在不登录、不读取任何凭据的情况下实时获得。请说明各自真实字段、公共目录快照与实时服务的区别，并明确哪些证据 available、哪些 unavailable。",
+      "expected_output": "准确映射 reco_rank、use_count、published_at，报告公共目录缺少排名字段且实时接口受 Bearer 认证保护；本地 createdAt 只能作为快照时间证据，不能冒充实时最新榜。",
+      "files": [],
+      "expectations": [
+        "准确给出综合、最热、最新对应的 reco_rank、use_count、published_at",
+        "区分公共目录快照、本地目录快照与官方实时服务",
+        "说明匿名实时接口的认证门槛及三个排序的真实可用状态",
+        "把 createdAt 仅作为本地快照最新证据，不声称实时排名",
+        "不读取凭据、不猜测数值，也不以 UI 顺序替代排名"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "official-partial-coverage-failure-policy",
+      "prompt": "如果 WorkBuddy 官方公共清单能匿名打开，但只有部分专家带排名字段，或者实时接口跳转、报错、要求登录，这个 Skill 应该怎么处理？不要读取凭据，不要抓 UI 卡片顺序，也不要为了给答案而猜热度。请给出可执行的失败与恢复规则。",
+      "expected_output": "坚持完整显式字段覆盖门槛；固定官方 HTTPS 允许列表且禁用凭据、环境代理和重定向；任何认证失败或部分覆盖均保持 unavailable，只允许未来重新运行匿名探针。",
+      "files": [],
+      "expectations": [
+        "只有完整、显式且覆盖候选全集的官方实时字段才能合并",
+        "公共目录部分字段、文件顺序或 UI 卡片顺序不能补齐排名",
+        "匿名请求受固定官方 HTTPS 来源约束，并禁用环境代理和重定向",
+        "遇到认证、跳转、格式或覆盖失败时保持 unavailable 并保留诊断证据",
+        "不恢复或读取登录凭据；恢复动作仅是未来重试官方匿名探针"
+      ]
+    }
+  ]
+}
