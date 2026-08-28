@@ -7,10 +7,113 @@ import argparse
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 
-def load_json(path: Path) -> dict:
+RECOMMENDATION_JSON_EVAL_IDS = {"4", "5", "6", "7", "11"}
+
+
+def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def score_recommendation_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Score one real recommend-command JSON item without grading prose style."""
+    evidence = item.get("ranking_evidence") if isinstance(item.get("ranking_evidence"), dict) else {}
+    relevance = evidence.get("relevance") if isinstance(evidence.get("relevance"), dict) else {}
+    category = evidence.get("category") if isinstance(evidence.get("category"), dict) else {}
+    hot = evidence.get("hot") if isinstance(evidence.get("hot"), dict) else {}
+    latest = evidence.get("latest") if isinstance(evidence.get("latest"), dict) else {}
+    comprehensive = evidence.get("comprehensive") if isinstance(evidence.get("comprehensive"), dict) else {}
+    hot_status = hot.get("status")
+    hot_honest = hot_status in {"available", "unavailable"} and (
+        hot_status == "available"
+        or (hot.get("use_count") is None and bool(hot.get("unavailable_reason")))
+    )
+    dimensions = {
+        "identity": bool(item.get("id") and item.get("display_name") and item.get("expert_type") in {"agent", "team"}),
+        "availability": item.get("availability") in {"installed", "metadata-only"},
+        "recommendation_reasons": isinstance(item.get("recommendation_reasons"), list)
+        and len(item["recommendation_reasons"]) >= 2,
+        "relevance": relevance.get("qualification", {}).get("status") == "qualified"
+        and float(relevance.get("semantic_score") or 0) > 0
+        and bool(relevance.get("field_evidence")),
+        "category": category.get("status") in {"available", "unavailable"}
+        and isinstance(item.get("category"), dict),
+        "hot": hot_honest,
+        "latest": latest.get("status") in {"available", "unavailable"},
+        "comprehensive": comprehensive.get("status") in {"available", "unavailable"},
+    }
+    points = sum(bool(value) for value in dimensions.values())
+    return {
+        "rank": item.get("rank"),
+        "id": item.get("id"),
+        "score": points,
+        "max_score": len(dimensions),
+        "passed": points == len(dimensions),
+        "dimensions": dimensions,
+    }
+
+
+def grade_recommendation_payload(
+    eval_id: str,
+    payload: dict[str, Any],
+    expectations: list[str],
+) -> dict[str, Any]:
+    """Grade the command's actual JSON and preserve an item-by-item audit trail."""
+    recommendations = payload.get("recommendations")
+    if not isinstance(recommendations, list):
+        recommendations = []
+    item_scores = [score_recommendation_item(item) for item in recommendations if isinstance(item, dict)]
+    ranks = [item.get("rank") for item in recommendations if isinstance(item, dict)]
+    ordered = ranks == list(range(1, len(ranks) + 1))
+    top_contract = 0 < len(recommendations) <= 3 and ordered and payload.get("returned") == len(recommendations)
+    all_items_pass = bool(item_scores) and all(item["passed"] for item in item_scores)
+    hot_source = payload.get("ranking_sources", {}).get("hot", {})
+    hot_consistent = hot_source.get("status") in {"available", "unavailable"} and all(
+        item.get("ranking_evidence", {}).get("hot", {}).get("status") == hot_source.get("status")
+        for item in recommendations
+        if isinstance(item, dict)
+    )
+    rendered = json.dumps(recommendations, ensure_ascii=False).casefold()
+
+    if eval_id == "4":
+        target_match = any(term in rendered for term in ("小红书", "种草", "粉丝增长", "xiaohongshu"))
+        checks = [top_contract, target_match, all_items_pass, hot_consistent, hot_source.get("status") == "unavailable"]
+    elif eval_id == "5":
+        target_match = any(term in rendered for term in ("mvp", "原型", "全栈", "软件开发"))
+        all_team = bool(recommendations) and all(item.get("expert_type") == "team" for item in recommendations)
+        checks = [top_contract and all_team, target_match, all_items_pass, hot_consistent, hot_source.get("status") == "unavailable"]
+    elif eval_id == "6":
+        data_hits = sum(any(term in json.dumps(item, ensure_ascii=False).casefold() for term in ("数据", "kpi", "excel", "报告")) for item in recommendations)
+        checks = [top_contract and data_hits >= 2, all_items_pass, hot_consistent, payload.get("qualified_candidate_count", 0) >= len(recommendations), hot_source.get("status") == "unavailable"]
+    elif eval_id == "7":
+        cross_border = any(term in rendered for term in ("跨境电商", "东南亚"))
+        market_or_compliance = any(term in rendered for term in ("市场进入", "海外市场", "全球发展", "合规"))
+        checks = [top_contract and cross_border and market_or_compliance, all_items_pass, hot_consistent, payload.get("qualified_candidate_count", 0) >= len(recommendations), hot_source.get("status") == "unavailable"]
+    elif eval_id == "11":
+        checks = [
+            payload.get("status") == "no-match",
+            payload.get("returned") == 0 and recommendations == [],
+            payload.get("qualified_candidate_count") == 0,
+            int(payload.get("rejected_weak_match_count") or 0) > 0,
+            bool(payload.get("no_match_reason")),
+        ]
+    else:
+        raise ValueError(f"Unsupported recommendation JSON eval id: {eval_id}")
+
+    if len(checks) != len(expectations):
+        raise ValueError(f"Expectation/check count mismatch for eval {eval_id}")
+    return {
+        "expectations": [
+            {"text": expectation, "passed": bool(passed), "evidence": "actual recommend JSON"}
+            for expectation, passed in zip(expectations, checks, strict=True)
+        ],
+        "recommendation_items": item_scores,
+        "payload_status": payload.get("status"),
+        "payload_returned": payload.get("returned"),
+        "grader_input": "outputs/recommendation.json",
+    }
 
 
 def ranked_lines(text: str) -> dict[int, str]:
@@ -317,23 +420,35 @@ def grade_iteration(iteration_path: Path) -> None:
     plan = load_json(iteration_path / "run_plan.json")
     for run in plan["runs"]:
         run_dir = Path(run["run_dir"])
-        response_path = run_dir / "outputs" / "response.md"
-        if not response_path.is_file():
-            raise FileNotFoundError(response_path)
-        text = response_path.read_text(encoding="utf-8-sig")
-        grading = {
-            "expectations": grade_eval(str(run["eval_id"]), text, list(run["expectations"])),
-            "grader": "evals/grade_recommendation_outputs.py",
-        }
+        eval_id = str(run["eval_id"])
+        if eval_id in RECOMMENDATION_JSON_EVAL_IDS:
+            payload_path = run_dir / "outputs" / "recommendation.json"
+            if not payload_path.is_file():
+                raise FileNotFoundError(payload_path)
+            grading = grade_recommendation_payload(
+                eval_id,
+                load_json(payload_path),
+                list(run["expectations"]),
+            )
+        else:
+            response_path = run_dir / "outputs" / "response.md"
+            if not response_path.is_file():
+                raise FileNotFoundError(response_path)
+            text = response_path.read_text(encoding="utf-8-sig")
+            grading = {
+                "expectations": grade_eval(eval_id, text, list(run["expectations"])),
+                "grader_input": "outputs/response.md",
+            }
+        grading["grader"] = "evals/grade_recommendation_outputs.py"
         (run_dir / "grading.json").write_text(
             json.dumps(grading, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         timing = {
-            "total_tokens": 0,
-            "duration_ms": 0,
+            "total_tokens": None,
+            "duration_ms": None,
             "measurement_status": "unavailable_in_collaboration_runtime",
-            "note": "Zero is a required numeric sentinel; do not interpret it as measured usage.",
+            "note": "Unavailable measurements are null; they are not zero-valued observations.",
         }
         (run_dir / "timing.json").write_text(
             json.dumps(timing, ensure_ascii=False, indent=2) + "\n",

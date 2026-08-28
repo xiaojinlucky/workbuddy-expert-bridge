@@ -64,6 +64,13 @@ METADATA_RECOVERY_ACTION = (
     "Install the package through WorkBuddy's own expert management UI, or provide an existing "
     "readable package root with --root; then run resolve again."
 )
+UNUSABLE_RECOVERY_ACTION = (
+    "Repair or reinstall the package through WorkBuddy's own expert management UI, or provide "
+    "a readable package root containing at least one agent Markdown file; then run resolve again."
+)
+INSTALLED = "installed"
+INSTALLED_UNUSABLE = "installed-unusable"
+METADATA_ONLY = "metadata-only"
 
 ASCII_TERM_RE = re.compile(r"[a-z0-9][a-z0-9+#._/-]*", re.IGNORECASE)
 CJK_SEQUENCE_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
@@ -114,6 +121,22 @@ CJK_STOPWORDS = {
     "请帮",
     "请给",
 }
+GENERIC_RECOMMEND_TERMS = {
+    "工作",
+    "工作流",
+    "任务",
+    "项目",
+    "流程",
+    "需求",
+    "方案",
+    "内容",
+    "工具",
+    "系统",
+    "服务",
+    "专家",
+    "实现",
+}
+GENERIC_RECOMMEND_ASCII_TERMS = {"app", "project", "task", "tool", "workflow"}
 TEAM_HINTS = ("专家团", "多角色专家", "多角色团队", "expert team", "multi-agent team")
 AGENT_HINTS = ("单专家", "单个专家", "一位专家", "个人专家", "single expert")
 RECOMMEND_FIELD_WEIGHTS = {
@@ -609,6 +632,17 @@ def unique_paths(paths: Iterable[Path]) -> list[Path]:
     return result
 
 
+def resolved_path_within(root: Path, candidate: Path) -> Path | None:
+    """Resolve a candidate and reject symlink or traversal escapes from root."""
+    try:
+        resolved_root = root.resolve()
+        resolved = candidate.resolve()
+        resolved.relative_to(resolved_root)
+    except (OSError, ValueError):
+        return None
+    return resolved
+
+
 def source_candidates(explicit_root: str | None) -> list[Path]:
     if explicit_root:
         return unique_paths([Path(explicit_root)])
@@ -669,7 +703,11 @@ def manifest_paths_for_root(root: Path) -> list[Path]:
         for marketplace in child_directories(marketplaces_root):
             manifests.extend(package_manifests_in_marketplace(marketplace))
 
-    return unique_paths(manifests)
+    return [
+        resolved
+        for manifest in unique_paths(manifests)
+        if (resolved := resolved_path_within(root, manifest)) is not None
+    ]
 
 
 def marketplace_name(package_root: Path) -> str:
@@ -690,6 +728,23 @@ def safe_package_path(package_root: Path, raw_path: str) -> tuple[Path | None, s
     except (OSError, ValueError):
         return None, f"Path escapes package root: {raw_path}"
     return resolved, None
+
+
+def safe_discovered_package_path(
+    package_root: Path,
+    candidate: Path,
+    *,
+    label: str,
+) -> tuple[Path | None, str | None]:
+    """Validate paths found by fallback enumeration, including symlinks."""
+    try:
+        raw_path = str(candidate.relative_to(package_root))
+    except ValueError:
+        return None, f"{label} escapes package root: {candidate}"
+    path, error = safe_package_path(package_root, raw_path)
+    if error:
+        return None, f"{label} escapes package root: {raw_path}"
+    return path, None
 
 
 def declared_string_paths(value: Any) -> list[str]:
@@ -715,7 +770,16 @@ def agent_paths(package_root: Path, manifest: dict[str, Any]) -> tuple[list[Path
     else:
         agents_dir = package_root / "agents"
         if agents_dir.is_dir():
-            result.extend(sorted(agents_dir.glob("*.md"), key=lambda p: p.name.casefold()))
+            for candidate in sorted(agents_dir.glob("*.md"), key=lambda p: p.name.casefold()):
+                path, error = safe_discovered_package_path(
+                    package_root,
+                    candidate,
+                    label="Discovered agent file",
+                )
+                if error:
+                    warnings.append(error)
+                elif path is not None and path.is_file():
+                    result.append(path)
 
     return unique_paths(result), warnings
 
@@ -739,8 +803,15 @@ def skill_paths(package_root: Path, manifest: dict[str, Any]) -> tuple[list[Path
         if skills_dir.is_dir():
             for child in child_directories(skills_dir):
                 skill_file = child / "SKILL.md"
-                if skill_file.is_file():
-                    result.append(skill_file)
+                path, error = safe_discovered_package_path(
+                    package_root,
+                    skill_file,
+                    label="Discovered skill file",
+                )
+                if error:
+                    warnings.append(error)
+                elif path is not None and path.is_file():
+                    result.append(path)
 
     return unique_paths(result), warnings
 
@@ -801,6 +872,7 @@ def build_package(manifest_path: Path) -> dict[str, Any] | None:
         "lead_path": str(lead_path) if lead_path else "",
         "agent_paths": [str(path) for path in agents],
         "agent_count": len(agents),
+        "availability": INSTALLED if agents else INSTALLED_UNUSABLE,
         "member_count": len(data.get("members")) if isinstance(data.get("members"), list) else 0,
         "manifest_path": str(manifest_path.resolve()),
         "package_root": str(package_root),
@@ -852,7 +924,9 @@ def cache_manifests_for_roots(roots: list[Path]) -> list[Path]:
         for candidate in candidates:
             manifest = candidate / "app" / "cache" / "experts" / "manifest.json"
             if manifest.is_file():
-                results.append(manifest)
+                resolved = resolved_path_within(candidate, manifest)
+                if resolved is not None:
+                    results.append(resolved)
     return unique_paths(results)
 
 
@@ -864,7 +938,9 @@ def runtime_team_roots_for_roots(roots: list[Path]) -> list[Path]:
         for candidate in candidates:
             teams_root = candidate / "teams"
             if teams_root.is_dir():
-                results.append(teams_root)
+                resolved = resolved_path_within(candidate, teams_root)
+                if resolved is not None:
+                    results.append(resolved)
     return unique_paths(results)
 
 
@@ -878,12 +954,16 @@ def load_runtime_teams(roots: list[Path]) -> tuple[list[dict[str, Any]], list[st
             config_path = team_dir / "config.json"
             if not config_path.is_file():
                 continue
-            key = os.path.normcase(str(config_path.resolve()))
+            safe_config = resolved_path_within(teams_root, config_path)
+            if safe_config is None:
+                warnings.append(f"Runtime team config escapes teams root: {config_path}")
+                continue
+            key = os.path.normcase(str(safe_config))
             if key in seen:
                 continue
             seen.add(key)
             try:
-                data = read_json(config_path)
+                data = read_json(safe_config)
             except BridgeError as exc:
                 warnings.append(str(exc))
                 continue
@@ -898,7 +978,7 @@ def load_runtime_teams(roots: list[Path]) -> tuple[list[dict[str, Any]], list[st
                     "member_count": len(members),
                     "classification": "runtime-team",
                     "reusable_package": False,
-                    "config_path": str(config_path.resolve()),
+                    "config_path": str(safe_config),
                 }
             )
     teams.sort(key=lambda item: item["name"].casefold())
@@ -917,6 +997,8 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
     items: list[dict[str, Any]] = []
     warnings: list[str] = []
     seen: set[str] = set()
+    linked_manifests: set[str] = set()
+    known_categories: dict[str, dict[str, Any]] = {}
     for path in cache_manifests_for_roots(roots):
         try:
             data = read_json(path)
@@ -942,6 +1024,7 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
                     "search_name": " ".join(localized_values(category.get("name"))),
                     "search_description": " ".join(localized_values(category.get("description"))),
                 }
+                known_categories[category_id] = category_map[category_id]
         for entry in experts:
             if not isinstance(entry, dict):
                 continue
@@ -967,6 +1050,10 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
                         local_matches.append(package)
             local_classes = sorted({package["package_class"] for package in local_matches})
             local_roots = sorted({package["package_root"] for package in local_matches})
+            usable_local_matches = [package for package in local_matches if package["agent_count"] > 0]
+            linked_manifests.update(
+                os.path.normcase(str(package["manifest_path"])) for package in local_matches
+            )
             category_id = str(entry.get("categoryId") or "")
             category = category_map.get(category_id, {})
             tags, search_tags = localized_list(entry.get("tags"))
@@ -1013,7 +1100,13 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
                     "reco_rank_source": str(path) if reco_rank is not None else "",
                     "display_position": display_position,
                     "prompt_file": str(entry.get("promptFile") or ""),
-                    "availability": "installed" if local_classes else "metadata-only",
+                    "availability": (
+                        INSTALLED
+                        if usable_local_matches
+                        else INSTALLED_UNUSABLE
+                        if local_matches
+                        else METADATA_ONLY
+                    ),
                     "local_package_classes": local_classes,
                     "local_package_roots": local_roots,
                     "catalog_path": str(path),
@@ -1027,6 +1120,68 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
                     },
                 }
             )
+
+    for package in installed:
+        manifest_key = os.path.normcase(str(package["manifest_path"]))
+        if manifest_key in linked_manifests:
+            continue
+        identifier = str(package.get("name") or package.get("folder") or "local-package")
+        base_identifier = identifier
+        suffix = 1
+        while identifier.casefold() in seen:
+            suffix += 1
+            identifier = f"{base_identifier}@{package['marketplace']}-{suffix}"
+        seen.add(identifier.casefold())
+        manifest = package.get("_manifest") if isinstance(package.get("_manifest"), dict) else {}
+        tags, search_tags = localized_list(manifest.get("tags"))
+        category_id = str(package.get("category_id") or "")
+        category = known_categories.get(category_id, {})
+        expert_type = str(package.get("expert_type") or package.get("kind") or "")
+        items.append(
+            {
+                "id": identifier,
+                "plugin": str(package.get("name") or ""),
+                "agent_name": str(package.get("agent_name") or ""),
+                "expert_type": expert_type,
+                "expert_type_source": (
+                    "manifest.expertType"
+                    if package["package_class"] == DECLARED_EXPERT
+                    else "readable-agent-count (structural only; not an Expert Center declaration)"
+                ),
+                "object_class": package["package_class"],
+                "formal_expert": package["package_class"] == DECLARED_EXPERT,
+                "display_name": str(package.get("display_name") or identifier),
+                "profession": str(package.get("profession") or ""),
+                "description": str(package.get("description") or ""),
+                "category_id": category_id,
+                "category_name": str(category.get("name") or category_id),
+                "category_description": str(category.get("description") or ""),
+                "tags": tags,
+                "created_at": "",
+                "updated_at": "",
+                "latest_value": "",
+                "latest_field": "",
+                "latest_source": "",
+                "use_count": None,
+                "use_count_source": "",
+                "reco_rank": None,
+                "reco_rank_source": "",
+                "display_position": None,
+                "prompt_file": "",
+                "availability": package["availability"],
+                "local_package_classes": [package["package_class"]],
+                "local_package_roots": [package["package_root"]],
+                "catalog_path": "",
+                "_search_fields": {
+                    "display_name": str(package.get("display_name") or identifier),
+                    "profession": str(package.get("profession") or ""),
+                    "description": str(package.get("description") or ""),
+                    "tags": " ".join(search_tags),
+                    "category_name": str(category.get("search_name") or category_id),
+                    "category_description": str(category.get("search_description") or ""),
+                },
+            }
+        )
     items.sort(key=lambda item: item["id"].casefold())
     return items, warnings
 
@@ -1047,6 +1202,7 @@ def compact_package_summary(package: dict[str, Any]) -> dict[str, Any]:
         "kind",
         "marketplace",
         "agent_count",
+        "availability",
         "version",
         "package_root",
     )
@@ -1131,6 +1287,12 @@ def term_specificity_factor(term: str) -> float:
     if CJK_SEQUENCE_RE.fullmatch(term):
         return (len(term) / 2.0) ** 1.5
     return 1.0 + min(len(term), 8) / 8.0
+
+
+def is_high_signal_recommend_term(term: str) -> bool:
+    if CJK_SEQUENCE_RE.fullmatch(term):
+        return len(term) >= 2 and term not in GENERIC_RECOMMEND_TERMS
+    return len(term) >= 3 and term not in GENERIC_RECOMMEND_ASCII_TERMS
 
 
 def infer_preferred_kind(query: str) -> str | None:
@@ -1307,6 +1469,30 @@ def score_catalog_item(
     for term in sorted(term_contributions, key=lambda value: (-len(value), value)):
         if not any(term in existing for existing in matched_concepts):
             matched_concepts.append(term)
+    direct_fields = {
+        "display_name",
+        "profession",
+        "tags",
+        "description",
+        "id",
+        "plugin",
+        "agent_name",
+    }
+    high_signal_terms = [term for term in matched_concepts if is_high_signal_recommend_term(term)]
+    direct_high_signal_terms = sorted(
+        {
+            term
+            for evidence in field_evidence
+            if evidence["field"] in direct_fields
+            for term in evidence["matched_terms"]
+            if is_high_signal_recommend_term(term)
+        },
+        key=lambda term: (-len(term), term),
+    )
+    qualified = len(direct_high_signal_terms) >= 2 or (
+        len(direct_high_signal_terms) == 1 and len(normalize_match_text(request)) <= 20
+    )
+    qualification_rule = "two direct high-signal terms, or one for a short focused request"
     coverage_factor = {0: 0.0, 1: 0.35, 2: 0.8}.get(len(matched_concepts), 1.0)
     semantic_score *= coverage_factor
     normalized_request = normalize_match_text(request)
@@ -1320,6 +1506,9 @@ def score_catalog_item(
     semantic_score *= scope_factor
     category_affinity_score = category_affinity.get(str(item.get("category_id") or ""), 0.0)
     category_bonus = min(category_affinity_score, 20.0)
+    if not qualified and len(direct_high_signal_terms) == 1 and category_bonus >= 10.0:
+        qualified = True
+        qualification_rule = "one direct high-signal term supported by strong category affinity"
     kind_bonus = 10.0 if preferred_kind and item.get("expert_type") == preferred_kind else 0.0
     availability_bonus = 3.0 if item.get("availability") == "installed" else 0.0
     field_evidence.sort(key=lambda evidence: (-float(evidence["score"]), evidence["field"]))
@@ -1334,6 +1523,13 @@ def score_catalog_item(
         "scope_factor": scope_factor,
         "unrequested_industry_scopes": scope_mismatches,
         "field_evidence": field_evidence,
+        "matched_concepts": matched_concepts,
+        "high_signal_matched_terms": high_signal_terms,
+        "direct_high_signal_matched_terms": direct_high_signal_terms,
+        "qualification": {
+            "status": "qualified" if qualified else "weak-match",
+            "rule": qualification_rule,
+        },
     }
 
 
@@ -1430,7 +1626,7 @@ def recommend_catalog(
     term_weights = query_term_weights(catalog, terms)
     category_affinity = category_affinity_scores(catalog, terms, term_weights)
     preferred_kind = infer_preferred_kind(request) if kind in {"auto", "all"} else kind
-    filtered = catalog
+    filtered = [item for item in catalog if item.get("availability") != INSTALLED_UNUSABLE]
     if kind in {"agent", "team"}:
         filtered = [item for item in filtered if item.get("expert_type") == kind]
     elif kind == "auto" and preferred_kind:
@@ -1444,6 +1640,7 @@ def recommend_catalog(
 
     ranking_sources = ranking_source_summary(catalog, official_online_probe)
     scored: list[dict[str, Any]] = []
+    raw_matched_count = 0
     for item in filtered:
         score = score_catalog_item(
             item,
@@ -1454,6 +1651,12 @@ def recommend_catalog(
             preferred_kind,
         )
         if score["semantic_score"] <= 0:
+            continue
+        raw_matched_count += 1
+        if category:
+            score["qualification"]["status"] = "qualified"
+            score["qualification"]["rule"] = "explicit category filter plus semantic match"
+        if score["qualification"]["status"] != "qualified":
             continue
         scored.append({"item": item, "score": score})
 
@@ -1494,6 +1697,13 @@ def recommend_catalog(
                     "local_package_roots": item["local_package_roots"],
                     "catalog_path": item["catalog_path"],
                 },
+                "object_class": item.get("object_class") or (
+                    item["local_package_classes"][0]
+                    if len(item["local_package_classes"]) == 1
+                    else "catalog-expert"
+                ),
+                "formal_expert": item.get("formal_expert", True),
+                "expert_type_source": item.get("expert_type_source") or "catalog.expertType",
                 "recommendation_reasons": recommendation_reasons(item, score, preferred_kind),
                 "ranking_evidence": {
                     "relevance": score,
@@ -1501,7 +1711,13 @@ def recommend_catalog(
                         "status": "available" if item.get("category_id") else "unavailable",
                         "id": item["category_id"],
                         "name": item["category_name"],
-                        "source": "expert.categoryId joined to manifest.categories",
+                        "source": (
+                            "expert.categoryId joined to manifest.categories"
+                            if item.get("catalog_path")
+                            else "local package manifest categoryId"
+                            if item.get("category_id")
+                            else None
+                        ),
                     },
                     "hot": {
                         "status": hot_status,
@@ -1559,6 +1775,14 @@ def recommend_catalog(
         },
         "candidate_count": len(filtered),
         "matched_candidate_count": len(scored),
+        "raw_matched_candidate_count": raw_matched_count,
+        "qualified_candidate_count": len(scored),
+        "rejected_weak_match_count": raw_matched_count - len(scored),
+        "no_match_reason": (
+            "No candidate had a direct high-signal requirement match; weak generic matches were not used to fill Top 3."
+            if not recommendations
+            else ""
+        ),
         "returned": len(recommendations),
         "requested_top": safe_limit,
         "recommendations": recommendations,
@@ -1702,19 +1926,40 @@ def inspect_package(package: dict[str, Any]) -> dict[str, Any]:
         directory = package_root / directory_name
         if not directory.is_dir():
             continue
+        safe_directory, directory_error = safe_discovered_package_path(
+            package_root,
+            directory,
+            label=f"Discovered {directory_name} directory",
+        )
+        if directory_error or safe_directory is None:
+            warnings.append(directory_error or f"Unsafe directory: {directory}")
+            continue
         try:
-            for path in directory.rglob("*"):
-                if path.is_file() and (path.suffix.casefold() in executable_suffixes or directory_name in {"scripts", "hooks"}):
-                    executable_files.append(str(path.resolve()))
+            for path in safe_directory.rglob("*"):
+                safe_path, path_error = safe_discovered_package_path(
+                    package_root,
+                    path,
+                    label="Discovered executable",
+                )
+                if path_error:
+                    warnings.append(path_error)
+                elif safe_path is not None and safe_path.is_file() and (
+                    safe_path.suffix.casefold() in executable_suffixes
+                    or directory_name in {"scripts", "hooks"}
+                ):
+                    executable_files.append(str(safe_path))
         except (PermissionError, OSError):
             warnings.append(f"Could not fully inspect executable directory: {directory}")
 
     license_value = manifest.get("license")
-    license_files = sorted(
-        str(path.resolve())
-        for path in package_root.glob("LICENSE*")
-        if path.is_file()
-    )
+    license_files: list[str] = []
+    for candidate in package_root.glob("LICENSE*"):
+        path, error = safe_discovered_package_path(package_root, candidate, label="Discovered license file")
+        if error:
+            warnings.append(error)
+        elif path is not None and path.is_file():
+            license_files.append(str(path))
+    license_files.sort()
     if not (isinstance(license_value, str) and license_value.strip()) and not license_files:
         warnings.append("No package license metadata or LICENSE file was found; do not redistribute by default.")
     if executable_files:
@@ -1752,9 +1997,10 @@ def inspect_package(package: dict[str, Any]) -> dict[str, Any]:
         "members": members,
         "skill_paths": [str(path) for path in skills],
         "reference_roots": [
-            str(path.resolve())
-            for path in (package_root / "references",)
-            if path.is_dir()
+            str(path)
+            for candidate in (package_root / "references",)
+            if candidate.is_dir()
+            and (path := resolved_path_within(package_root, candidate)) is not None
         ],
         "dependencies": dependencies,
         "connector_ids": connector_ids,
@@ -1885,7 +2131,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(catalog)
     catalog.add_argument("--query", default="", help="Case-insensitive metadata filter")
     catalog.add_argument("--kind", choices=("all", "agent", "team"), default="all")
-    catalog.add_argument("--availability", choices=("all", "installed", "metadata-only"), default="all")
+    catalog.add_argument(
+        "--availability",
+        choices=("all", INSTALLED, INSTALLED_UNUSABLE, METADATA_ONLY),
+        default="all",
+    )
     catalog.add_argument("--limit", type=int, default=DEFAULT_CATALOG_LIMIT)
 
     recommend = subparsers.add_parser(
@@ -1895,7 +2145,7 @@ def build_parser() -> argparse.ArgumentParser:
     recommend.add_argument("request", help="Open-ended task or outcome description")
     add_common(recommend)
     recommend.add_argument("--kind", choices=("auto", "all", "agent", "team"), default="auto")
-    recommend.add_argument("--availability", choices=("all", "installed", "metadata-only"), default="all")
+    recommend.add_argument("--availability", choices=("all", INSTALLED, METADATA_ONLY), default="all")
     recommend.add_argument("--category", default="", help="Optional category id or display-name filter")
     recommend.add_argument("--top", type=int, default=DEFAULT_RECOMMEND_LIMIT)
     recommend.add_argument(
@@ -1915,21 +2165,32 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         catalog, catalog_warnings = load_catalog(roots, packages)
         runtime_teams, runtime_warnings = load_runtime_teams(roots)
         declared = [item for item in packages if item["package_class"] == DECLARED_EXPERT]
+        usable_declared = [item for item in declared if item["availability"] == INSTALLED]
         agent_packages = [item for item in packages if item["package_class"] == AGENT_PACKAGE]
+        usable_packages = [item for item in packages if item["availability"] == INSTALLED]
         return {
             "status": "ok",
             "command": "doctor",
             "source_roots": [str(path) for path in roots],
-            "installed_packages": len(packages),
-            "installed_experts": len(declared),
-            "installed_agents": sum(item["kind"] == "agent" for item in declared),
-            "installed_teams": sum(item["kind"] == "team" for item in declared),
+            "discovered_package_manifests": len(packages),
+            "installed_packages": len(usable_packages),
+            "installed_usable_packages": len(usable_packages),
+            "installed_unusable_packages": sum(
+                item["availability"] == INSTALLED_UNUSABLE for item in packages
+            ),
+            "declared_expert_packages": len(declared),
+            "installed_experts": len(usable_declared),
+            "installed_agents": sum(item["kind"] == "agent" for item in usable_declared),
+            "installed_teams": sum(item["kind"] == "team" for item in usable_declared),
             "installed_agent_packages": len(agent_packages),
             "agent_package_single": sum(item["kind"] == "agent" for item in agent_packages),
             "agent_package_multi": sum(item["kind"] == "team" for item in agent_packages),
             "runtime_teams": len(runtime_teams),
             "catalog_entries": len(catalog),
             "catalog_installed": sum(item["availability"] == "installed" for item in catalog),
+            "catalog_installed_unusable": sum(
+                item["availability"] == INSTALLED_UNUSABLE for item in catalog
+            ),
             "catalog_metadata_only": sum(item["availability"] == "metadata-only" for item in catalog),
             "python": ".".join(str(part) for part in sys.version_info[:3]),
             "read_only": True,
@@ -1950,8 +2211,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             if item["package_class"] == AGENT_PACKAGE
         ]
         runtime_summaries = [compact_runtime_team_summary(item) for item in runtime_teams]
-        metadata_only = [item for item in catalog if item["availability"] == "metadata-only"]
-        installed_catalog = [item for item in catalog if item["availability"] == "installed"]
+        metadata_only = [item for item in catalog if item["availability"] == METADATA_ONLY]
+        installed_catalog = [item for item in catalog if item["availability"] == INSTALLED]
+        installed_unusable = [item for item in catalog if item["availability"] == INSTALLED_UNUSABLE]
         example_limit = max(args.metadata_examples, 0)
         examples = [catalog_summary(item) for item in metadata_only[:example_limit]]
         return {
@@ -1967,6 +2229,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "total": len(catalog),
                 "installed": len(installed_catalog),
                 "metadata_only": len(metadata_only),
+                "installed_unusable": len(installed_unusable),
                 "metadata_only_examples": examples,
                 "examples_returned": len(examples),
                 "examples_truncated": len(examples) < len(metadata_only),
@@ -2035,6 +2298,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             package = None
 
         if package is not None:
+            if package["availability"] == INSTALLED_UNUSABLE:
+                return {
+                    "status": "blocked",
+                    "command": "resolve",
+                    "source_roots": [str(path) for path in roots],
+                    "availability": INSTALLED_UNUSABLE,
+                    "match": compact_package_summary(package),
+                    "missing": ["readable local agent prompt Markdown"],
+                    "recovery_action": UNUSABLE_RECOVERY_ACTION,
+                    "next_action": "repair-in-workbuddy",
+                    "read_only": True,
+                    "warnings": discovery_warnings,
+                }
             return {
                 "status": "ok",
                 "command": "resolve",
@@ -2067,12 +2343,27 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
         local_matches = packages_for_catalog_item(packages, catalog_item)
         if local_matches:
+            usable_matches = [item for item in local_matches if item["agent_count"] > 0]
+            if not usable_matches:
+                return {
+                    "status": "blocked",
+                    "command": "resolve",
+                    "source_roots": [str(path) for path in roots],
+                    "availability": INSTALLED_UNUSABLE,
+                    "match": compact_package_summary(local_matches[0]),
+                    "catalog_match": catalog_summary(catalog_item),
+                    "missing": ["readable local agent prompt Markdown"],
+                    "recovery_action": UNUSABLE_RECOVERY_ACTION,
+                    "next_action": "repair-in-workbuddy",
+                    "read_only": True,
+                    "warnings": discovery_warnings + catalog_warnings,
+                }
             return {
                 "status": "ok",
                 "command": "resolve",
                 "source_roots": [str(path) for path in roots],
                 "availability": "installed",
-                "match": compact_package_summary(local_matches[0]),
+                "match": compact_package_summary(usable_matches[0]),
                 "catalog_match": catalog_summary(catalog_item),
                 "next_action": "inspect",
                 "read_only": True,
@@ -2101,6 +2392,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.command == "inspect":
         package = select_package(packages, args.name, args.marketplace or None)
+        if package["availability"] == INSTALLED_UNUSABLE:
+            return {
+                "status": "blocked",
+                "command": "inspect",
+                "source_roots": [str(path) for path in roots],
+                "availability": INSTALLED_UNUSABLE,
+                "expert": inspect_package(package),
+                "missing": ["readable local agent prompt Markdown"],
+                "recovery_action": UNUSABLE_RECOVERY_ACTION,
+                "warnings": discovery_warnings,
+            }
         return {
             "status": "ok",
             "command": "inspect",

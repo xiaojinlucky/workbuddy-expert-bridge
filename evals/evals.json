@@ -135,6 +135,20 @@
         "遇到认证、跳转、格式或覆盖失败时保持 unavailable 并保留诊断证据",
         "不恢复或读取登录凭据；恢复动作仅是未来重试官方匿名探针"
       ]
+    },
+    {
+      "id": 11,
+      "name": "reject-weak-github-readme-match",
+      "prompt": "为一个 GitHub 项目选择一套成熟的中文仓库介绍与 README 工作流。只推荐本机已经安装且真正高度匹配的 WorkBuddy 对象；不足 Top 3 时不要用泛化的‘项目’或‘工作流’关键词凑数。",
+      "expected_output": "当本机安装候选只命中 GitHub、项目或工作流等局部泛化词，却没有 README 或仓库介绍能力证据时，返回结构化 no-match，而不是凑 Top 3。",
+      "files": [],
+      "expectations": [
+        "真实 recommend JSON 的 status 为 no-match",
+        "returned 为 0 且 recommendations 为空",
+        "qualified_candidate_count 为 0",
+        "rejected_weak_match_count 大于 0，证明弱匹配被识别",
+        "提供 no_match_reason，说明没有用弱匹配补齐 Top 3"
+      ]
     }
   ]
 }
