@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -71,6 +72,179 @@ UNUSABLE_RECOVERY_ACTION = (
 INSTALLED = "installed"
 INSTALLED_UNUSABLE = "installed-unusable"
 METADATA_ONLY = "metadata-only"
+
+TRUST_POLICY_VERSION = "2026-08-29.1"
+TRUST_ELIGIBLE = "eligible"
+TRUST_REVIEW_REQUIRED = "review-required"
+TRUST_QUARANTINED = "quarantined"
+TRUST_UNKNOWN = "unknown"
+TRUST_STATUSES = (
+    TRUST_ELIGIBLE,
+    TRUST_REVIEW_REQUIRED,
+    TRUST_QUARANTINED,
+    TRUST_UNKNOWN,
+)
+FINDING_BLOCK = "block"
+FINDING_REVIEW = "review"
+FINDING_NOTICE = "notice"
+FINDING_SEVERITIES = (FINDING_BLOCK, FINDING_REVIEW, FINDING_NOTICE)
+DEFAULT_AUDIT_LIMIT = 25
+MAX_AUDIT_FILES = 256
+MAX_AUDIT_DIRECTORY_ENTRIES = 2048
+MAX_AUDIT_DEPTH = 16
+MAX_AUDIT_FILE_BYTES = 1024 * 1024
+MAX_AUDIT_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_AUDIT_FINDINGS = 200
+MAX_DECLARED_AUDIT_PATHS = 256
+MAX_MANIFEST_JSON_BYTES = 1024 * 1024
+MAX_CATALOG_JSON_BYTES = 5 * 1024 * 1024
+MAX_RUNTIME_JSON_BYTES = 1024 * 1024
+MAX_CROSS_LINE_SCAN_BYTES = MAX_AUDIT_FILE_BYTES
+AUDIT_TEXT_SUFFIXES = frozenset(
+    {
+        ".bat",
+        ".cfg",
+        ".cjs",
+        ".cmd",
+        ".ini",
+        ".js",
+        ".json",
+        ".jsonc",
+        ".md",
+        ".mdx",
+        ".mjs",
+        ".ps1",
+        ".py",
+        ".sh",
+        ".toml",
+        ".ts",
+        ".txt",
+        ".xml",
+        ".yaml",
+        ".yml",
+    }
+)
+
+URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"(?i)(?:^[a-z]:[\\/]|^\\\\)")
+EMBEDDED_WINDOWS_PATH_RE = re.compile(
+    r"(?i)(?:(?<![a-z0-9])[a-z]:[\\/]|\\\\[^\\\s]+[\\/])"
+)
+EMBEDDED_POSIX_LOCAL_PATH_RE = re.compile(
+    r"(?i)(?:^|[\s:,(])/(?:home|users|tmp|var(?:/tmp)?|mnt|opt|private|root)(?:/|\b)"
+)
+TRUST_RULE_PATTERNS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
+    (
+        "prompt_override",
+        FINDING_BLOCK,
+        "instruction-override",
+        re.compile(
+            r"(?:\b(?:ignore|disregard|override|bypass|forget)\b.{0,100}"
+            r"\b(?:previous|prior|system|developer|user|all)\b.{0,60}"
+            r"\b(?:instructions?|rules?|prompts?)\b|"
+            r"(?:忽略|覆盖|绕过|忘记).{0,80}(?:之前|以上|系统|开发者|用户|所有).{0,50}(?:指令|规则|提示词))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "credential_access",
+        FINDING_BLOCK,
+        "credential-access",
+        re.compile(
+            r"(?:\b(?:read|scan|search|find|collect|dump|print|show|reveal|echo|extract|enumerate)\b"
+            r".{0,100}\b(?:credentials?|passwords?|api[-_\s]*keys?|access[-_\s]*tokens?|cookies?|"
+            r"secrets?|\.env|id_rsa|ssh[-_\s]*keys?)\b|"
+            r"(?:读取|扫描|搜索|查找|收集|导出|打印|回显|显示|提取).{0,80}"
+            r"(?:凭据|密码|口令|API\s*密钥|令牌|Cookie|\.env|SSH\s*密钥))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "sensitive_data_upload",
+        FINDING_BLOCK,
+        "sensitive-upload",
+        re.compile(
+            r"(?:\bexfiltrate\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|files?|data|prompts?|history)\b|"
+            r"\b(?:upload|transmit)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history)\b|"
+            r"\b(?:send|post|forward)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history)\b.{0,100}\b(?:external|third[- ]party|server|endpoint|url|website|cloud|service)\b|"
+            r"\b(?:external|third[- ]party|server|endpoint|url|website|cloud|service)\b.{0,100}\b(?:send|post|forward)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history)\b|"
+            r"外传.{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|文件|数据|提示词|聊天记录)|"
+            r"上传.{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录)|"
+            r"(?:发送|提交|回传).{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录).{0,80}(?:外部|第三方|服务器|接口|网址|网站|云端|服务)|"
+            r"(?:外部|第三方|服务器|接口|网址|网站|云端|服务).{0,80}(?:发送|提交|回传).{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "remote_download_execute",
+        FINDING_BLOCK,
+        "download-and-execute",
+        re.compile(
+            r"(?:(?:\bcurl\b|\bwget\b|invoke-webrequest|\bdownload\b|\bfetch\b|下载).{0,180}"
+            r"(?:\bbash\b|\bsh\b|powershell|\bcmd\b|\bexecute\b|\bexec\b|\brun\b|\bsource\b|\beval\b|执行|运行)|"
+            r"(?:\bbash\b|\bsh\b|powershell|\bcmd\b|\bexecute\b|\bexec\b|\brun\b|执行|运行).{0,180}"
+            r"(?:\bcurl\b|\bwget\b|invoke-webrequest|\bdownload\b|下载))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "qr_auth_or_payment",
+        FINDING_REVIEW,
+        "qr-gate",
+        re.compile(
+            r"(?:(?:扫码|二维码|qr\s*code).{0,100}(?:登录|授权|充值|支付|login|auth|recharge|pay)|"
+            r"(?:登录|授权|充值|支付|login|auth|recharge|pay).{0,100}(?:扫码|二维码|qr\s*code))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "payment_or_membership_gate",
+        FINDING_REVIEW,
+        "payment-gate",
+        re.compile(
+            r"(?:充值|付费解锁|付费后|购买后|开通会员|会员专享|消耗积分|积分不足|"
+            r"paywall|paid\s+plan|premium\s+required|top\s*up|credits?\s+required|membership\s+required|"
+            r"subscription\s+required)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "tracking_or_referral_link",
+        FINDING_REVIEW,
+        "tracked-link",
+        re.compile(
+            r"(?:[?&](?:ref|referral|affiliate|source|utm_[a-z_]+)=|\baffiliate\b|邀请码|推广码|返利链接|"
+            r"(?:(?:配套阅读|推广链接|广告链接|赞助内容|优惠活动|专属福利|"
+            r"promotional?\s+(?:link|resource)|sponsored\s+(?:link|content)).{0,180}https?://|"
+            r"https?://.{0,180}(?:配套阅读|推广链接|广告链接|赞助内容|优惠活动|专属福利|"
+            r"promotional?\s+(?:link|resource)|sponsored\s+(?:link|content))))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "external_account_or_api_key",
+        FINDING_REVIEW,
+        "external-account-gate",
+        re.compile(
+            r"(?:(?:\b(?:need|required|must)\b|需要|必须|请先).{0,100}"
+            r"(?:注册|登录|api[-_ ]?key|access[-_ ]?token|第三方账号)|"
+            r"(?:注册|登录|api[-_ ]?key|access[-_ ]?token|第三方账号).{0,100}"
+            r"(?:\b(?:need|required|must)\b|需要|必须|请先))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "social_diversion",
+        FINDING_REVIEW,
+        "social-diversion",
+        re.compile(
+            r"(?:(?:添加|加|加入|关注|私信|联系).{0,60}"
+            r"(?:微信|微信群|公众号|QQ|Telegram|Discord|社群)|"
+            r"(?:join|follow|contact|dm).{0,60}(?:wechat|telegram|discord|community))",
+            re.IGNORECASE,
+        ),
+    ),
+)
 
 ASCII_TERM_RE = re.compile(r"[a-z0-9][a-z0-9+#._/-]*", re.IGNORECASE)
 CJK_SEQUENCE_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
@@ -179,13 +353,28 @@ class BridgeError(RuntimeError):
         self.code = code
 
 
-def read_json(path: Path) -> Any:
+def read_json(path: Path, *, max_bytes: int = MAX_CATALOG_JSON_BYTES) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
+        size = path.stat().st_size
+        if size > max_bytes:
+            raise BridgeError(
+                f"JSON file exceeds the bounded read limit: {path}",
+                code="json_too_large",
+            )
+        with path.open("rb") as handle:
+            raw = handle.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise BridgeError(
+                f"JSON file exceeds the bounded read limit: {path}",
+                code="json_too_large",
+            )
+        return json.loads(raw.decode("utf-8-sig"))
     except FileNotFoundError as exc:
         raise BridgeError(f"File not found: {path}", code="file_not_found") from exc
     except PermissionError as exc:
         raise BridgeError(f"File is not readable: {path}", code="permission_denied") from exc
+    except UnicodeDecodeError as exc:
+        raise BridgeError(f"JSON file is not UTF-8 text: {path}", code="invalid_json") from exc
     except json.JSONDecodeError as exc:
         raise BridgeError(
             f"Invalid JSON in {path}: line {exc.lineno}, column {exc.colno}",
@@ -816,8 +1005,751 @@ def skill_paths(package_root: Path, manifest: dict[str, Any]) -> tuple[list[Path
     return unique_paths(result), warnings
 
 
+def _relative_audit_path(package_root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(package_root).as_posix()
+    except ValueError:
+        return "[outside-package-root]"
+
+
+def _safe_relative_identifier(value: Any) -> str:
+    """Project an untrusted package-relative label without exposing host paths."""
+    if not isinstance(value, str):
+        return "[unknown-relative-file]"
+    normalized = value.strip().replace("\\", "/")
+    if (
+        not normalized
+        or WINDOWS_ABSOLUTE_PATH_RE.search(normalized)
+        or normalized.startswith("/")
+        or ".." in Path(normalized).parts
+    ):
+        return "[unsafe-relative-path]"
+    return sanitize_untrusted_text(normalized, limit=260) or "[unknown-relative-file]"
+
+
+def _path_has_symlink(package_root: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(package_root)
+    except ValueError:
+        return True
+    current = package_root
+    for part in relative.parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _new_audit_state() -> dict[str, Any]:
+    return {
+        "candidates": {},
+        "entries_seen": 0,
+        "findings": [],
+        "finding_total": 0,
+        "finding_counts": {severity: 0 for severity in FINDING_SEVERITIES},
+        "finding_keys": set(),
+        "incomplete_reasons": [],
+        "incomplete_keys": set(),
+    }
+
+
+def _record_finding(
+    state: dict[str, Any],
+    *,
+    rule_id: str,
+    severity: str,
+    relative_file: str,
+    line: int,
+    match_kind: str,
+) -> None:
+    if severity not in FINDING_SEVERITIES:
+        raise ValueError(f"Unsupported finding severity: {severity}")
+    safe_relative_file = _safe_relative_identifier(relative_file)
+    key = (rule_id, severity, safe_relative_file, line, match_kind)
+    if key in state["finding_keys"]:
+        return
+    state["finding_keys"].add(key)
+    state["finding_total"] += 1
+    state["finding_counts"][severity] += 1
+    if len(state["findings"]) < MAX_AUDIT_FINDINGS:
+        state["findings"].append(
+            {
+                "rule_id": rule_id,
+                "severity": severity,
+                "evidence_count": 1,
+                "relative_file": safe_relative_file,
+                "line": line,
+                "match_kind": match_kind,
+            }
+        )
+
+
+def _record_incomplete(
+    state: dict[str, Any],
+    *,
+    rule_id: str,
+    relative_file: str,
+    match_kind: str,
+) -> None:
+    safe_relative_file = _safe_relative_identifier(relative_file)
+    key = (rule_id, safe_relative_file, match_kind)
+    if key not in state["incomplete_keys"]:
+        state["incomplete_keys"].add(key)
+        state["incomplete_reasons"].append(
+            {
+                "rule_id": rule_id,
+                "relative_file": safe_relative_file,
+                "match_kind": match_kind,
+            }
+        )
+    _record_finding(
+        state,
+        rule_id=rule_id,
+        severity=FINDING_BLOCK,
+        relative_file=safe_relative_file,
+        line=0,
+        match_kind=match_kind,
+    )
+
+
+def _bounded_directory_entries(
+    package_root: Path,
+    directory: Path,
+    state: dict[str, Any],
+) -> list[Path]:
+    relative = _relative_audit_path(package_root, directory)
+    if _path_has_symlink(package_root, directory):
+        _record_incomplete(
+            state,
+            rule_id="scan_path_violation",
+            relative_file=relative,
+            match_kind="symlink",
+        )
+        return []
+    try:
+        entries: list[Path] = []
+        with os.scandir(directory) as iterator:
+            for entry in iterator:
+                state["entries_seen"] += 1
+                if state["entries_seen"] > MAX_AUDIT_DIRECTORY_ENTRIES:
+                    _record_incomplete(
+                        state,
+                        rule_id="scan_budget_exceeded",
+                        relative_file=relative,
+                        match_kind="directory-entry-limit",
+                    )
+                    break
+                path = Path(entry.path)
+                if entry.is_symlink():
+                    _record_incomplete(
+                        state,
+                        rule_id="scan_path_violation",
+                        relative_file=_relative_audit_path(package_root, path),
+                        match_kind="symlink",
+                    )
+                    continue
+                entries.append(path)
+    except (FileNotFoundError, PermissionError, OSError):
+        _record_incomplete(
+            state,
+            rule_id="scan_read_error",
+            relative_file=relative,
+            match_kind="directory-read",
+        )
+        return []
+    return sorted(entries, key=lambda item: item.name.casefold())
+
+
+def _queue_audit_file(
+    package_root: Path,
+    path: Path,
+    state: dict[str, Any],
+    *,
+    require_supported_text: bool = False,
+) -> None:
+    relative = _relative_audit_path(package_root, path)
+    if relative == "[outside-package-root]" or _path_has_symlink(package_root, path):
+        _record_incomplete(
+            state,
+            rule_id="scan_path_violation",
+            relative_file=relative,
+            match_kind="path-or-symlink",
+        )
+        return
+    if path.suffix.casefold() not in AUDIT_TEXT_SUFFIXES:
+        if require_supported_text:
+            _record_incomplete(
+                state,
+                rule_id="scan_read_error",
+                relative_file=relative,
+                match_kind="unaudited-executable-content",
+            )
+        return
+    candidates: dict[str, Path] = state["candidates"]
+    if relative in candidates:
+        return
+    if len(candidates) >= MAX_AUDIT_FILES:
+        _record_incomplete(
+            state,
+            rule_id="scan_budget_exceeded",
+            relative_file=relative,
+            match_kind="file-count-limit",
+        )
+        return
+    candidates[relative] = path
+
+
+def _walk_audit_path(
+    package_root: Path,
+    path: Path,
+    state: dict[str, Any],
+    *,
+    depth: int = 0,
+    require_supported_text: bool = False,
+) -> None:
+    relative = _relative_audit_path(package_root, path)
+    if depth > MAX_AUDIT_DEPTH:
+        _record_incomplete(
+            state,
+            rule_id="scan_budget_exceeded",
+            relative_file=relative,
+            match_kind="directory-depth-limit",
+        )
+        return
+    if _path_has_symlink(package_root, path):
+        _record_incomplete(
+            state,
+            rule_id="scan_path_violation",
+            relative_file=relative,
+            match_kind="symlink",
+        )
+        return
+    try:
+        is_file = path.is_file()
+        is_dir = path.is_dir()
+    except OSError:
+        _record_incomplete(
+            state,
+            rule_id="scan_read_error",
+            relative_file=relative,
+            match_kind="path-stat",
+        )
+        return
+    if is_file:
+        _queue_audit_file(
+            package_root,
+            path,
+            state,
+            require_supported_text=require_supported_text,
+        )
+        return
+    if not is_dir:
+        _record_incomplete(
+            state,
+            rule_id="declared_content_missing",
+            relative_file=relative,
+            match_kind="missing-path",
+        )
+        return
+    for child in _bounded_directory_entries(package_root, path, state):
+        _walk_audit_path(
+            package_root,
+            child,
+            state,
+            depth=depth + 1,
+            require_supported_text=require_supported_text,
+        )
+
+
+def _declared_audit_paths(
+    package_root: Path,
+    value: Any,
+    state: dict[str, Any],
+    *,
+    declaration_kind: str,
+    allow_directories: bool,
+) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    if len(value) > MAX_DECLARED_AUDIT_PATHS:
+        _record_incomplete(
+            state,
+            rule_id="scan_budget_exceeded",
+            relative_file=MANIFEST_RELATIVE.as_posix(),
+            match_kind=f"{declaration_kind}-declaration-limit",
+        )
+    for raw_value in value[:MAX_DECLARED_AUDIT_PATHS]:
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            _record_incomplete(
+                state,
+                rule_id="declared_content_missing",
+                relative_file=MANIFEST_RELATIVE.as_posix(),
+                match_kind=f"invalid-{declaration_kind}-declaration",
+            )
+            continue
+        relative = Path(raw_value.strip())
+        display_relative = relative.as_posix()
+        if relative.is_absolute() or ".." in relative.parts:
+            _record_incomplete(
+                state,
+                rule_id="scan_path_violation",
+                relative_file=display_relative,
+                match_kind=f"{declaration_kind}-path-escape",
+            )
+            continue
+        path = package_root / relative
+        if _path_has_symlink(package_root, path):
+            _record_incomplete(
+                state,
+                rule_id="scan_path_violation",
+                relative_file=display_relative,
+                match_kind=f"{declaration_kind}-symlink",
+            )
+            continue
+        try:
+            exists = path.exists()
+            is_directory = path.is_dir()
+        except OSError:
+            exists = False
+            is_directory = False
+        if not exists:
+            _record_incomplete(
+                state,
+                rule_id="declared_content_missing",
+                relative_file=display_relative,
+                match_kind=f"missing-{declaration_kind}",
+            )
+            continue
+        if is_directory and not allow_directories:
+            _record_incomplete(
+                state,
+                rule_id="scan_read_error",
+                relative_file=display_relative,
+                match_kind=f"directory-{declaration_kind}",
+            )
+            continue
+        if not is_directory and path.suffix.casefold() not in AUDIT_TEXT_SUFFIXES:
+            _record_incomplete(
+                state,
+                rule_id="scan_read_error",
+                relative_file=display_relative,
+                match_kind=f"unsupported-{declaration_kind}-text",
+            )
+            continue
+        _walk_audit_path(package_root, path, state)
+    return True
+
+
+def _fallback_agent_audit_paths(
+    package_root: Path,
+    state: dict[str, Any],
+) -> None:
+    agents_dir = package_root / "agents"
+    if not agents_dir.exists():
+        _record_incomplete(
+            state,
+            rule_id="declared_content_missing",
+            relative_file="agents",
+            match_kind="missing-agent-directory",
+        )
+        return
+    for candidate in _bounded_directory_entries(package_root, agents_dir, state):
+        try:
+            is_file = candidate.is_file()
+        except OSError:
+            is_file = False
+        if is_file and candidate.suffix.casefold() == ".md":
+            _queue_audit_file(package_root, candidate, state)
+
+
+def _risk_match_details(text: str) -> list[tuple[str, str, str, int]]:
+    matches: list[tuple[str, str, str, int]] = []
+    for rule_id, severity, match_kind, pattern in TRUST_RULE_PATTERNS:
+        # Block rules are deliberately fail-closed. Natural-language negation is
+        # too ambiguous to safely exempt a match (for example, double negatives
+        # such as "do not hesitate to ignore"). Benign safety prose may therefore
+        # require review, but attack wording cannot become eligible by phrasing.
+        accepted = list(pattern.finditer(text))
+        if not accepted:
+            continue
+        matches.extend((rule_id, severity, match_kind, match.start()) for match in accepted)
+    if URL_RE.search(text) and not any(
+        severity != FINDING_NOTICE for _, severity, _, _ in matches
+    ):
+        url_match = URL_RE.search(text)
+        if url_match is not None:
+            matches.append(("external_link", FINDING_NOTICE, "external-link", url_match.start()))
+    return matches
+
+
+def _line_risk_matches(line: str) -> list[tuple[str, str, str]]:
+    return list(
+        dict.fromkeys(
+            (rule_id, severity, match_kind)
+            for rule_id, severity, match_kind, _ in _risk_match_details(line)
+        )
+    )
+
+
+def _cross_line_scan_text(text: str) -> str:
+    """Join wrapped lines without letting rules cross paragraph or heading boundaries."""
+    scan_text = text[:MAX_CROSS_LINE_SCAN_BYTES]
+    protected_newlines: set[int] = set()
+    boundary_patterns = (
+        re.compile(r"\r?\n[ \t]*\r?\n"),
+        re.compile(r"\r?\n(?=[ \t]{0,3}#{1,6}[ \t])"),
+    )
+    for boundary_pattern in boundary_patterns:
+        for match in boundary_pattern.finditer(scan_text):
+            protected_newlines.update(
+                index
+                for index in range(match.start(), match.end())
+                if scan_text[index] == "\n"
+            )
+    characters = list(scan_text)
+    for index, character in enumerate(characters):
+        if character == "\r":
+            characters[index] = " "
+        elif character == "\n" and index not in protected_newlines:
+            characters[index] = " "
+    return "".join(characters)
+
+
+def sanitize_untrusted_text(value: Any, *, limit: int = 240) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.replace("\x1b", "").split())
+    if EMBEDDED_WINDOWS_PATH_RE.search(text) or EMBEDDED_POSIX_LOCAL_PATH_RE.search(text):
+        return "[redacted-local-path]"
+    if any(severity in {FINDING_BLOCK, FINDING_REVIEW} for _, severity, _ in _line_risk_matches(text)):
+        return "[redacted-untrusted-text]"
+    text = URL_RE.sub("[external-link]", text)
+    home_name = Path.home().name
+    if home_name and len(home_name) >= 3:
+        text = re.sub(re.escape(home_name), "[local-user]", text, flags=re.IGNORECASE)
+    if len(text) > limit:
+        return text[: max(limit - 1, 0)] + "…"
+    return text
+
+
+def safe_identifier(value: Any, *, limit: int = 120) -> str:
+    return sanitize_untrusted_text(value, limit=limit)
+
+
+def _trust_recovery_action(trust_status: str) -> str:
+    if trust_status == TRUST_ELIGIBLE:
+        return "No trust action is required before normal use; re-audit if the content digest changes."
+    if trust_status == TRUST_REVIEW_REQUIRED:
+        return (
+            "Review the sanitized findings and obtain explicit user approval for this policy version "
+            "and content digest before minimally reading package content."
+        )
+    if trust_status == TRUST_QUARANTINED:
+        return (
+            "Do not reuse package content. Repair or remove the blocking content or incomplete-scan "
+            "condition, then run audit again."
+        )
+    return "Local package content is unavailable; install or provide a readable package before auditing."
+
+
+def unknown_trust_report(identity: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "policy_version": TRUST_POLICY_VERSION,
+        "trust_status": TRUST_UNKNOWN,
+        "package": identity or {},
+        "content_digest": None,
+        "scan_complete": None,
+        "scan": {
+            "status": "not-applicable",
+            "files_scanned": 0,
+            "bytes_scanned": 0,
+            "limits": {
+                "max_files": MAX_AUDIT_FILES,
+                "max_single_file_bytes": MAX_AUDIT_FILE_BYTES,
+                "max_total_bytes": MAX_AUDIT_TOTAL_BYTES,
+            },
+            "incomplete_reasons": [],
+        },
+        "finding_counts": {severity: 0 for severity in FINDING_SEVERITIES},
+        "findings": [],
+        "findings_truncated": False,
+        "recovery_action": _trust_recovery_action(TRUST_UNKNOWN),
+        "read_only": True,
+    }
+
+
+def audit_package(package: dict[str, Any]) -> dict[str, Any]:
+    package_root = Path(package["package_root"])
+    manifest = package.get("_manifest") if isinstance(package.get("_manifest"), dict) else {}
+    state = _new_audit_state()
+
+    manifest_path = package_root / MANIFEST_RELATIVE
+    if _path_has_symlink(package_root, manifest_path):
+        _record_incomplete(
+            state,
+            rule_id="scan_path_violation",
+            relative_file=MANIFEST_RELATIVE.as_posix(),
+            match_kind="manifest-symlink",
+        )
+    elif not manifest_path.is_file():
+        _record_incomplete(
+            state,
+            rule_id="declared_content_missing",
+            relative_file=MANIFEST_RELATIVE.as_posix(),
+            match_kind="missing-manifest",
+        )
+    else:
+        _queue_audit_file(package_root, manifest_path, state)
+
+    if not _declared_audit_paths(
+        package_root,
+        manifest.get("agents"),
+        state,
+        declaration_kind="agent",
+        allow_directories=False,
+    ):
+        _fallback_agent_audit_paths(package_root, state)
+
+    if not _declared_audit_paths(
+        package_root,
+        manifest.get("skills"),
+        state,
+        declaration_kind="skill",
+        allow_directories=True,
+    ):
+        skills_root = package_root / "skills"
+        if skills_root.exists():
+            _walk_audit_path(package_root, skills_root, state)
+
+    references_root = package_root / "references"
+    if references_root.exists():
+        _walk_audit_path(package_root, references_root, state)
+
+    for executable_directory_name in ("scripts", "bin", "hooks"):
+        executable_root = package_root / executable_directory_name
+        if executable_root.exists():
+            _walk_audit_path(
+                package_root,
+                executable_root,
+                state,
+                require_supported_text=True,
+            )
+
+    hasher = hashlib.sha256()
+    total_bytes = 0
+    files_scanned = 0
+    for relative_file, path in sorted(state["candidates"].items()):
+        try:
+            size = path.stat().st_size
+        except (FileNotFoundError, PermissionError, OSError):
+            _record_incomplete(
+                state,
+                rule_id="scan_read_error",
+                relative_file=relative_file,
+                match_kind="file-stat",
+            )
+            continue
+        if size > MAX_AUDIT_FILE_BYTES:
+            _record_incomplete(
+                state,
+                rule_id="scan_budget_exceeded",
+                relative_file=relative_file,
+                match_kind="single-file-byte-limit",
+            )
+            continue
+        if total_bytes + size > MAX_AUDIT_TOTAL_BYTES:
+            _record_incomplete(
+                state,
+                rule_id="scan_budget_exceeded",
+                relative_file=relative_file,
+                match_kind="total-byte-limit",
+            )
+            continue
+        try:
+            raw = path.read_bytes()
+        except (FileNotFoundError, PermissionError, OSError):
+            _record_incomplete(
+                state,
+                rule_id="scan_read_error",
+                relative_file=relative_file,
+                match_kind="file-read",
+            )
+            continue
+        if len(raw) != size:
+            _record_incomplete(
+                state,
+                rule_id="scan_read_error",
+                relative_file=relative_file,
+                match_kind="file-changed-during-read",
+            )
+            continue
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            _record_incomplete(
+                state,
+                rule_id="scan_read_error",
+                relative_file=relative_file,
+                match_kind="unsupported-text-encoding",
+            )
+            continue
+        hasher.update(relative_file.encode("utf-8"))
+        hasher.update(b"\x00")
+        hasher.update(raw)
+        hasher.update(b"\x00")
+        total_bytes += size
+        files_scanned += 1
+        scan_text = _cross_line_scan_text(text)
+        for rule_id, severity, match_kind, match_start in _risk_match_details(scan_text):
+            line_number = text.count("\n", 0, match_start) + 1
+            _record_finding(
+                state,
+                rule_id=rule_id,
+                severity=severity,
+                relative_file=relative_file,
+                line=line_number,
+                match_kind=match_kind,
+            )
+
+    if package.get("package_class") == AGENT_PACKAGE:
+        _record_finding(
+            state,
+            rule_id="undeclared_agent_package",
+            severity=FINDING_REVIEW,
+            relative_file=MANIFEST_RELATIVE.as_posix(),
+            line=1,
+            match_kind="missing-expertType",
+        )
+
+    finding_counts = dict(state["finding_counts"])
+
+    scan_complete = not state["incomplete_reasons"]
+    if not scan_complete or finding_counts[FINDING_BLOCK] > 0:
+        trust_status = TRUST_QUARANTINED
+    elif finding_counts[FINDING_REVIEW] > 0:
+        trust_status = TRUST_REVIEW_REQUIRED
+    else:
+        trust_status = TRUST_ELIGIBLE
+    identity = {
+        "name": safe_identifier(package.get("name")),
+        "display_name": safe_identifier(package.get("display_name")),
+        "version": safe_identifier(package.get("version")),
+        "marketplace": safe_identifier(package.get("marketplace")),
+        "package_class": package.get("package_class"),
+        "expert_type": package.get("expert_type") or None,
+        "availability": package.get("availability"),
+    }
+    return {
+        "policy_version": TRUST_POLICY_VERSION,
+        "trust_status": trust_status,
+        "package": identity,
+        "content_digest": f"sha256:{hasher.hexdigest()}" if scan_complete else None,
+        "scan_complete": scan_complete,
+        "scan": {
+            "status": "complete" if scan_complete else "incomplete",
+            "files_scanned": files_scanned,
+            "bytes_scanned": total_bytes,
+            "limits": {
+                "max_files": MAX_AUDIT_FILES,
+                "max_directory_entries": MAX_AUDIT_DIRECTORY_ENTRIES,
+                "max_depth": MAX_AUDIT_DEPTH,
+                "max_single_file_bytes": MAX_AUDIT_FILE_BYTES,
+                "max_total_bytes": MAX_AUDIT_TOTAL_BYTES,
+            },
+            "incomplete_reasons": state["incomplete_reasons"],
+        },
+        "finding_counts": finding_counts,
+        "findings": state["findings"],
+        "findings_truncated": state["finding_total"] > len(state["findings"]),
+        "recovery_action": _trust_recovery_action(trust_status),
+        "read_only": True,
+    }
+
+
+def trust_summary(report: dict[str, Any], *, include_findings: bool = False) -> dict[str, Any]:
+    keys = (
+        "policy_version",
+        "trust_status",
+        "content_digest",
+        "scan_complete",
+        "finding_counts",
+        "recovery_action",
+    )
+    summary = {key: report.get(key) for key in keys}
+    if include_findings:
+        summary["scan"] = report.get("scan", {})
+        summary["findings"] = report.get("findings", [])
+        summary["findings_truncated"] = bool(report.get("findings_truncated"))
+    return summary
+
+
+def package_trust(package: dict[str, Any]) -> dict[str, Any]:
+    report = package.get("_trust_audit")
+    if not isinstance(report, dict):
+        report = audit_package(package)
+        package["_trust_audit"] = report
+    return report
+
+
+def trust_rank(trust_status: str) -> int:
+    return {
+        TRUST_ELIGIBLE: 0,
+        TRUST_UNKNOWN: 1,
+        TRUST_REVIEW_REQUIRED: 2,
+        TRUST_QUARANTINED: 3,
+    }.get(trust_status, 3)
+
+
+def most_restrictive_trust(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    if not reports:
+        return unknown_trust_report()
+    return max(reports, key=lambda report: trust_rank(str(report.get("trust_status") or "")))
+
+
+def oversized_manifest_package(manifest_path: Path) -> dict[str, Any]:
+    """Represent an oversized manifest without reading its body into memory."""
+    package_root = manifest_path.parent.parent.resolve()
+    agents, path_warnings = agent_paths(package_root, {})
+    path_warnings.append("manifest-json-too-large")
+    package = {
+        "name": package_root.name,
+        "folder": package_root.name,
+        "marketplace": marketplace_name(package_root),
+        "package_class": AGENT_PACKAGE,
+        "kind": "agent" if len(agents) <= 1 else "team",
+        "kind_source": "bounded-fallback-agent-count",
+        "expert_type": "",
+        "version": "",
+        "display_name": package_root.name,
+        "profession": "",
+        "description": "",
+        "category_id": "",
+        "agent_name": "",
+        "lead_agent": "",
+        "lead_path": "",
+        "agent_paths": [str(path) for path in agents],
+        "agent_count": len(agents),
+        "availability": INSTALLED if agents else INSTALLED_UNUSABLE,
+        "member_count": 0,
+        "manifest_path": str(manifest_path.resolve()),
+        "package_root": str(package_root),
+        "warnings": path_warnings,
+        "_manifest": {},
+    }
+    package["_trust_audit"] = audit_package(package)
+    return package
+
+
 def build_package(manifest_path: Path) -> dict[str, Any] | None:
-    data = read_json(manifest_path)
+    try:
+        data = read_json(manifest_path, max_bytes=MAX_MANIFEST_JSON_BYTES)
+    except BridgeError as exc:
+        if exc.code == "json_too_large":
+            return oversized_manifest_package(manifest_path)
+        raise
     if not isinstance(data, dict):
         raise BridgeError(f"Manifest root must be an object: {manifest_path}", code="invalid_manifest")
 
@@ -854,7 +1786,7 @@ def build_package(manifest_path: Path) -> dict[str, Any] | None:
                 lead_path = path
                 break
 
-    return {
+    package = {
         "name": name,
         "folder": package_root.name,
         "marketplace": marketplace_name(package_root),
@@ -879,6 +1811,8 @@ def build_package(manifest_path: Path) -> dict[str, Any] | None:
         "warnings": path_warnings,
         "_manifest": data,
     }
+    package["_trust_audit"] = audit_package(package)
+    return package
 
 
 def discover_packages(roots: list[Path]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -963,7 +1897,7 @@ def load_runtime_teams(roots: list[Path]) -> tuple[list[dict[str, Any]], list[st
                 continue
             seen.add(key)
             try:
-                data = read_json(safe_config)
+                data = read_json(safe_config, max_bytes=MAX_RUNTIME_JSON_BYTES)
             except BridgeError as exc:
                 warnings.append(str(exc))
                 continue
@@ -1001,7 +1935,7 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
     known_categories: dict[str, dict[str, Any]] = {}
     for path in cache_manifests_for_roots(roots):
         try:
-            data = read_json(path)
+            data = read_json(path, max_bytes=MAX_CATALOG_JSON_BYTES)
         except BridgeError as exc:
             warnings.append(str(exc))
             continue
@@ -1051,6 +1985,19 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
             local_classes = sorted({package["package_class"] for package in local_matches})
             local_roots = sorted({package["package_root"] for package in local_matches})
             usable_local_matches = [package for package in local_matches if package["agent_count"] > 0]
+            local_trust = most_restrictive_trust(
+                [package_trust(package) for package in local_matches]
+            ) if local_matches else unknown_trust_report(
+                {
+                    "name": safe_identifier(identifier),
+                    "display_name": safe_identifier(localized(entry.get("displayName"), identifier)),
+                    "version": "",
+                    "marketplace": "catalog",
+                    "package_class": "metadata-only",
+                    "expert_type": str(entry.get("expertType") or "") or None,
+                    "availability": METADATA_ONLY,
+                }
+            )
             linked_manifests.update(
                 os.path.normcase(str(package["manifest_path"])) for package in local_matches
             )
@@ -1107,9 +2054,11 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
                         if local_matches
                         else METADATA_ONLY
                     ),
+                    "trust_status": local_trust["trust_status"],
                     "local_package_classes": local_classes,
                     "local_package_roots": local_roots,
                     "catalog_path": str(path),
+                    "_trust_audit": local_trust,
                     "_search_fields": {
                         "display_name": " ".join(localized_values(entry.get("displayName"))) or display_name,
                         "profession": " ".join(localized_values(entry.get("profession"))) or profession,
@@ -1137,6 +2086,7 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
         category_id = str(package.get("category_id") or "")
         category = known_categories.get(category_id, {})
         expert_type = str(package.get("expert_type") or package.get("kind") or "")
+        local_trust = package_trust(package)
         items.append(
             {
                 "id": identifier,
@@ -1169,9 +2119,11 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
                 "display_position": None,
                 "prompt_file": "",
                 "availability": package["availability"],
+                "trust_status": local_trust["trust_status"],
                 "local_package_classes": [package["package_class"]],
                 "local_package_roots": [package["package_root"]],
                 "catalog_path": "",
+                "_trust_audit": local_trust,
                 "_search_fields": {
                     "display_name": str(package.get("display_name") or identifier),
                     "profession": str(package.get("profession") or ""),
@@ -1187,11 +2139,86 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
 
 
 def package_summary(package: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in package.items() if not key.startswith("_") and key not in {"agent_paths", "lead_path", "warnings"}}
+    keys = (
+        "name",
+        "folder",
+        "marketplace",
+        "package_class",
+        "kind",
+        "kind_source",
+        "expert_type",
+        "version",
+        "display_name",
+        "profession",
+        "description",
+        "category_id",
+        "agent_name",
+        "lead_agent",
+        "agent_count",
+        "availability",
+        "member_count",
+    )
+    summary = {key: package.get(key) for key in keys}
+    for key in (
+        "name",
+        "folder",
+        "marketplace",
+        "version",
+        "display_name",
+        "profession",
+        "description",
+        "category_id",
+        "agent_name",
+        "lead_agent",
+    ):
+        summary[key] = sanitize_untrusted_text(summary.get(key))
+    summary["trust"] = trust_summary(package_trust(package))
+    summary["trust_status"] = summary["trust"]["trust_status"]
+    return summary
 
 
 def catalog_summary(item: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in item.items() if not key.startswith("_")}
+    hidden = {
+        "prompt_file",
+        "local_package_roots",
+        "catalog_path",
+        "latest_source",
+        "use_count_source",
+        "reco_rank_source",
+    }
+    summary = {
+        key: value
+        for key, value in item.items()
+        if not key.startswith("_") and key not in hidden
+    }
+    for key in (
+        "id",
+        "plugin",
+        "agent_name",
+        "display_name",
+        "profession",
+        "description",
+        "category_id",
+        "category_name",
+        "category_description",
+        "created_at",
+        "updated_at",
+        "latest_value",
+    ):
+        summary[key] = sanitize_untrusted_text(summary.get(key))
+    if summary.get("expert_type") not in {"agent", "team", ""}:
+        summary["expert_type"] = "unknown"
+    summary["tags"] = [
+        sanitize_untrusted_text(tag)
+        for tag in summary.get("tags", [])
+        if isinstance(tag, str)
+    ][:50]
+    report = item.get("_trust_audit")
+    if not isinstance(report, dict):
+        report = unknown_trust_report()
+    summary["trust"] = trust_summary(report)
+    summary["trust_status"] = report["trust_status"]
+    return summary
 
 
 def compact_package_summary(package: dict[str, Any]) -> dict[str, Any]:
@@ -1204,14 +2231,20 @@ def compact_package_summary(package: dict[str, Any]) -> dict[str, Any]:
         "agent_count",
         "availability",
         "version",
-        "package_root",
     )
-    return {key: package[key] for key in keys}
+    summary = {key: package.get(key) for key in keys}
+    for key in ("name", "display_name", "marketplace", "version"):
+        summary[key] = sanitize_untrusted_text(summary.get(key))
+    summary["trust"] = trust_summary(package_trust(package))
+    summary["trust_status"] = summary["trust"]["trust_status"]
+    return summary
 
 
 def compact_runtime_team_summary(team: dict[str, Any]) -> dict[str, Any]:
-    keys = ("name", "classification", "member_count", "reusable_package", "config_path")
-    return {key: team[key] for key in keys}
+    keys = ("name", "classification", "member_count", "reusable_package")
+    summary = {key: team.get(key) for key in keys}
+    summary["name"] = sanitize_untrusted_text(summary.get("name"))
+    return summary
 
 
 def matches_query(item: dict[str, Any], query: str) -> bool:
@@ -1323,15 +2356,27 @@ def ranking_source_summary(
     official_online_probe: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     total = len(catalog)
-    source_paths = sorted({str(item.get("catalog_path") or "") for item in catalog if item.get("catalog_path")})
+    source_paths = ["local-cache"] if any(item.get("catalog_path") for item in catalog) else []
     hot_source_paths = sorted(
-        {str(item.get("use_count_source") or "") for item in catalog if item.get("use_count_source")}
+        {
+            label
+            for item in catalog
+            if (label := public_source_label(item.get("use_count_source"))) is not None
+        }
     )
     latest_source_paths = sorted(
-        {str(item.get("latest_source") or "") for item in catalog if item.get("latest_source")}
+        {
+            label
+            for item in catalog
+            if (label := public_source_label(item.get("latest_source"))) is not None
+        }
     )
     recommended_source_paths = sorted(
-        {str(item.get("reco_rank_source") or "") for item in catalog if item.get("reco_rank_source")}
+        {
+            label
+            for item in catalog
+            if (label := public_source_label(item.get("reco_rank_source"))) is not None
+        }
     )
     category_known = sum(bool(item.get("category_id") and item.get("category_name")) for item in catalog)
     hot_known = sum(exact_number(item.get("use_count")) is not None for item in catalog)
@@ -1604,12 +2649,23 @@ def recommendation_reasons(
                 if term not in terms:
                     terms.append(term)
         reasons.append(f"需求词“{'、'.join(terms[:5])}”命中其{labels}。")
-    category_name = str(item.get("category_name") or item.get("category_id") or "未分类")
+    category_name = sanitize_untrusted_text(
+        str(item.get("category_name") or item.get("category_id") or "未分类")
+    )
     reasons.append(f"归属 WorkBuddy“{category_name}”分类。")
     if preferred_kind and item.get("expert_type") == preferred_kind:
         label = "专家团" if preferred_kind == "team" else "单专家"
         reasons.append(f"需求体现了{label}偏好，候选类型一致。")
     return reasons
+
+
+def public_source_label(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme == "https" and (parsed.hostname or "").casefold() in WORKBUDDY_OFFICIAL_HOSTS:
+        return value
+    return "local-cache"
 
 
 def recommend_catalog(
@@ -1620,13 +2676,22 @@ def recommend_catalog(
     availability: str,
     category: str,
     limit: int,
+    trust: str = TRUST_ELIGIBLE,
     official_online_probe: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if trust != "all" and trust not in TRUST_STATUSES:
+        raise BridgeError(f"Unsupported trust filter: {trust}", code="invalid_trust_filter")
+    trust_pool = (
+        list(catalog)
+        if trust == "all"
+        else [item for item in catalog if item.get("trust_status") == trust]
+    )
+    excluded_by_trust = len(catalog) - len(trust_pool)
     terms = extract_query_terms(request)
-    term_weights = query_term_weights(catalog, terms)
-    category_affinity = category_affinity_scores(catalog, terms, term_weights)
+    term_weights = query_term_weights(trust_pool, terms)
+    category_affinity = category_affinity_scores(trust_pool, terms, term_weights)
     preferred_kind = infer_preferred_kind(request) if kind in {"auto", "all"} else kind
-    filtered = [item for item in catalog if item.get("availability") != INSTALLED_UNUSABLE]
+    filtered = [item for item in trust_pool if item.get("availability") != INSTALLED_UNUSABLE]
     if kind in {"agent", "team"}:
         filtered = [item for item in filtered if item.get("expert_type") == kind]
     elif kind == "auto" and preferred_kind:
@@ -1635,10 +2700,10 @@ def recommend_catalog(
         filtered = [item for item in filtered if item.get("availability") == availability]
     category_ids: set[str] = set()
     if category:
-        category_ids = resolve_category_filter(catalog, category)
+        category_ids = resolve_category_filter(trust_pool, category)
         filtered = [item for item in filtered if item.get("category_id") in category_ids]
 
-    ranking_sources = ranking_source_summary(catalog, official_online_probe)
+    ranking_sources = ranking_source_summary(trust_pool, official_online_probe)
     scored: list[dict[str, Any]] = []
     raw_matched_count = 0
     for item in filtered:
@@ -1677,25 +2742,38 @@ def recommend_catalog(
     for rank, record in enumerate(scored[:safe_limit], start=1):
         item = record["item"]
         score = record["score"]
+        safe_score = dict(score)
+        safe_score["unrequested_industry_scopes"] = [
+            sanitize_untrusted_text(value, limit=40)
+            for value in score.get("unrequested_industry_scopes", [])
+            if isinstance(value, str)
+        ][:20]
+        item_trust = item.get("_trust_audit")
+        if not isinstance(item_trust, dict):
+            item_trust = unknown_trust_report()
         hot_status = ranking_sources["hot"]["status"]
         latest_status = "available" if item.get("latest_value") else "unavailable"
         comprehensive_status = ranking_sources["comprehensive"]["status"]
         recommendations.append(
             {
                 "rank": rank,
-                "id": item["id"],
-                "display_name": item["display_name"],
-                "profession": item["profession"],
+                "id": safe_identifier(item["id"]),
+                "display_name": sanitize_untrusted_text(item["display_name"]),
+                "profession": sanitize_untrusted_text(item["profession"]),
                 "category": {
-                    "id": item["category_id"],
-                    "name": item["category_name"],
+                    "id": safe_identifier(item["category_id"]),
+                    "name": sanitize_untrusted_text(item["category_name"]),
                 },
-                "expert_type": item["expert_type"],
+                "expert_type": item["expert_type"] if item.get("expert_type") in {"agent", "team"} else "unknown",
                 "availability": item["availability"],
                 "availability_evidence": {
-                    "local_package_classes": item["local_package_classes"],
-                    "local_package_roots": item["local_package_roots"],
-                    "catalog_path": item["catalog_path"],
+                    "local_package_classes": [
+                        value
+                        for value in item.get("local_package_classes", [])
+                        if value in {DECLARED_EXPERT, AGENT_PACKAGE}
+                    ],
+                    "local_package_count": len(item.get("local_package_roots") or []),
+                    "catalog_source": "local-cache" if item.get("catalog_path") else "local-package",
                 },
                 "object_class": item.get("object_class") or (
                     item["local_package_classes"][0]
@@ -1704,15 +2782,16 @@ def recommend_catalog(
                 ),
                 "formal_expert": item.get("formal_expert", True),
                 "expert_type_source": item.get("expert_type_source") or "catalog.expertType",
+                "trust": trust_summary(item_trust),
                 "recommendation_reasons": recommendation_reasons(item, score, preferred_kind),
                 "ranking_evidence": {
-                    "relevance": score,
+                    "relevance": safe_score,
                     "category": {
                         "status": "available" if item.get("category_id") else "unavailable",
-                        "id": item["category_id"],
-                        "name": item["category_name"],
+                        "id": safe_identifier(item.get("category_id")),
+                        "name": sanitize_untrusted_text(item.get("category_name")),
                         "source": (
-                            "expert.categoryId joined to manifest.categories"
+                            "expert.categoryId joined to local cache categories"
                             if item.get("catalog_path")
                             else "local package manifest categoryId"
                             if item.get("category_id")
@@ -1723,28 +2802,28 @@ def recommend_catalog(
                         "status": hot_status,
                         "use_count": item.get("use_count") if hot_status == "available" else None,
                         "display_position": item.get("display_position"),
-                        "source": item.get("use_count_source") if hot_status == "available" else None,
+                        "source": public_source_label(item.get("use_count_source")) if hot_status == "available" else None,
                         "official_ranking_endpoint": WORKBUDDY_RANKING_ENDPOINT,
                         "unavailable_reason": ranking_sources["hot"]["unavailable_reason"],
                     },
                     "latest": {
                         "status": latest_status,
-                        "value": item.get("latest_value") or None,
+                        "value": sanitize_untrusted_text(item.get("latest_value"), limit=80) or None,
                         "local_field": item.get("latest_field") or None,
                         "workbuddy_sort_field": WORKBUDDY_LATEST_SORT_FIELD,
-                        "source": item.get("latest_source") if latest_status == "available" else None,
+                        "source": public_source_label(item.get("latest_source")) if latest_status == "available" else None,
                     },
                     "comprehensive": {
                         "status": comprehensive_status,
                         "reco_rank": item.get("reco_rank") if comprehensive_status == "available" else None,
-                        "source": item.get("reco_rank_source") if comprehensive_status == "available" else None,
+                        "source": public_source_label(item.get("reco_rank_source")) if comprehensive_status == "available" else None,
                         "unavailable_reason": ranking_sources["comprehensive"]["unavailable_reason"],
                     },
                 },
                 "next_action": (
-                    f"resolve {item['id']} and inspect the installed package"
-                    if item["availability"] == "installed"
-                    else METADATA_RECOVERY_ACTION
+                    f"resolve {safe_identifier(item['id'])} and inspect the installed package"
+                    if item["availability"] == "installed" and item_trust["trust_status"] == TRUST_ELIGIBLE
+                    else f"audit {safe_identifier(item['id'])} before any package-content use"
                 ),
             }
         )
@@ -1756,7 +2835,7 @@ def recommend_catalog(
                 if term not in matched_terms:
                     matched_terms.append(term)
     returned_terms = matched_terms[:40]
-    return {
+    payload = {
         "status": "ok" if recommendations else "no-match",
         "request": request,
         "filters": {
@@ -1764,7 +2843,8 @@ def recommend_catalog(
             "inferred_kind_preference": preferred_kind,
             "availability": availability,
             "category": category,
-            "resolved_category_ids": sorted(category_ids),
+            "trust": trust,
+            "resolved_category_ids": sorted(safe_identifier(value) for value in category_ids),
         },
         "query_evidence": {
             "term_count": len(terms),
@@ -1774,6 +2854,7 @@ def recommend_catalog(
             "strategy": "English tokens plus Chinese 2-6 character n-grams; stop words excluded",
         },
         "candidate_count": len(filtered),
+        "excluded_by_trust_count": excluded_by_trust,
         "matched_candidate_count": len(scored),
         "raw_matched_candidate_count": raw_matched_count,
         "qualified_candidate_count": len(scored),
@@ -1804,6 +2885,7 @@ def recommend_catalog(
         "ranking_sources": ranking_sources,
         "read_only": True,
     }
+    return project_public_payload(payload)
 
 
 def select_package(
@@ -1829,7 +2911,11 @@ def select_package(
         declared = [item for item in exact if item["package_class"] == DECLARED_EXPERT]
         if len(declared) == 1:
             return declared[0]
-        options = ", ".join(f"{item['marketplace']}:{item['name']}" for item in exact)
+        options = ", ".join(
+            f"{safe_identifier(item.get('marketplace'), limit=40)}:"
+            f"{safe_identifier(item.get('name'), limit=80)}"
+            for item in exact[:20]
+        )
         raise BridgeError(f"Expert name is ambiguous: {options}", code="ambiguous_expert")
 
     partial = [item for item in candidates if matches_query(item, query)]
@@ -1843,7 +2929,11 @@ def select_package(
             f"No installed expert or agent package matches: {query}",
             code="expert_not_found",
         )
-    options = ", ".join(f"{item['marketplace']}:{item['name']}" for item in partial[:20])
+    options = ", ".join(
+        f"{safe_identifier(item.get('marketplace'), limit=40)}:"
+        f"{safe_identifier(item.get('name'), limit=80)}"
+        for item in partial[:20]
+    )
     raise BridgeError(f"Expert query is ambiguous: {options}", code="ambiguous_expert")
 
 
@@ -1863,7 +2953,7 @@ def select_catalog_item(items: list[dict[str, Any]], query: str) -> dict[str, An
     if len(exact) == 1:
         return exact[0]
     if len(exact) > 1:
-        options = ", ".join(str(item["id"]) for item in exact[:20])
+        options = ", ".join(safe_identifier(item.get("id"), limit=100) for item in exact[:20])
         raise BridgeError(f"Catalog query is ambiguous: {options}", code="ambiguous_expert")
 
     partial = [item for item in items if matches_query(item, query)]
@@ -1871,7 +2961,7 @@ def select_catalog_item(items: list[dict[str, Any]], query: str) -> dict[str, An
         return partial[0]
     if not partial:
         return None
-    options = ", ".join(str(item["id"]) for item in partial[:20])
+    options = ", ".join(safe_identifier(item.get("id"), limit=100) for item in partial[:20])
     raise BridgeError(f"Catalog query is ambiguous: {options}", code="ambiguous_expert")
 
 
@@ -1914,6 +3004,74 @@ def bounded_section(items: list[dict[str, Any]], limit: int) -> dict[str, Any]:
     }
 
 
+def relative_package_path(package_root: Path, value: Any) -> str:
+    if not isinstance(value, (str, Path)) or not str(value):
+        return ""
+    path = Path(value)
+    try:
+        return path.relative_to(package_root).as_posix()
+    except ValueError:
+        return "[outside-package-root]"
+
+
+def project_members(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    allowed_string_keys = ("id", "name", "agent", "agentName", "kind")
+    allowed_boolean_keys = ("required", "optional")
+    result: list[dict[str, Any]] = []
+    for item in value[:100]:
+        if isinstance(item, str):
+            result.append({"id": safe_identifier(item)})
+            continue
+        if not isinstance(item, dict):
+            continue
+        projected: dict[str, Any] = {}
+        for key in allowed_string_keys:
+            if isinstance(item.get(key), str):
+                projected[key] = safe_identifier(item[key])
+        for key in allowed_boolean_keys:
+            if isinstance(item.get(key), bool):
+                projected[key] = item[key]
+        if projected:
+            result.append(projected)
+    return result
+
+
+def project_dependencies(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return []
+    result: list[dict[str, Any]] = []
+    for raw_name in sorted(value, key=lambda item: str(item).casefold())[:100]:
+        name = safe_identifier(str(raw_name))
+        raw_value = value[raw_name]
+        projected: dict[str, Any] = {"name": name}
+        if isinstance(raw_value, str):
+            projected["constraint"] = safe_identifier(raw_value)
+        elif isinstance(raw_value, list):
+            identifiers = [safe_identifier(item) for item in raw_value if isinstance(item, str)]
+            projected["entry_count"] = len(raw_value)
+            projected["identifiers"] = identifiers[:50]
+        elif isinstance(raw_value, dict):
+            projected["entry_count"] = len(raw_value)
+            projected["identifiers"] = [
+                safe_identifier(str(item))
+                for item in sorted(raw_value, key=lambda item: str(item).casefold())[:50]
+            ]
+        elif isinstance(raw_value, (bool, int, float)):
+            projected["value"] = raw_value
+        else:
+            projected["value_type"] = type(raw_value).__name__
+        result.append(projected)
+    return result
+
+
+def project_connector_ids(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [safe_identifier(item) for item in value if isinstance(item, str)][:100]
+
+
 def inspect_package(package: dict[str, Any]) -> dict[str, Any]:
     manifest = package["_manifest"]
     package_root = Path(package["package_root"])
@@ -1922,6 +3080,7 @@ def inspect_package(package: dict[str, Any]) -> dict[str, Any]:
 
     executable_suffixes = {".exe", ".dll", ".so", ".dylib", ".ps1", ".bat", ".cmd", ".sh"}
     executable_files: list[str] = []
+    executable_entries_seen = 0
     for directory_name in ("scripts", "bin", "hooks"):
         directory = package_root / directory_name
         if not directory.is_dir():
@@ -1936,6 +3095,10 @@ def inspect_package(package: dict[str, Any]) -> dict[str, Any]:
             continue
         try:
             for path in safe_directory.rglob("*"):
+                executable_entries_seen += 1
+                if executable_entries_seen > MAX_AUDIT_DIRECTORY_ENTRIES:
+                    warnings.append("Executable inventory exceeded the bounded directory-entry budget.")
+                    break
                 safe_path, path_error = safe_discovered_package_path(
                     package_root,
                     path,
@@ -1974,40 +3137,47 @@ def inspect_package(package: dict[str, Any]) -> dict[str, Any]:
     if package["package_class"] == DECLARED_EXPERT and package["expert_type"] == "team" and not package["lead_path"]:
         warnings.append("Team lead file could not be resolved from teamInfo or agentName.")
 
-    members = manifest.get("members") if isinstance(manifest.get("members"), list) else []
-    dependencies = manifest.get("dependencies") if isinstance(manifest.get("dependencies"), dict) else {}
-    connector_ids = manifest.get("connectorIds") if isinstance(manifest.get("connectorIds"), list) else []
+    members = project_members(manifest.get("members"))
+    dependencies = project_dependencies(manifest.get("dependencies"))
+    connector_ids = project_connector_ids(manifest.get("connectorIds"))
+    report = package_trust(package)
+    safe_warnings = sorted(
+        {
+            sanitize_untrusted_text(str(warning).replace(str(package_root), "<package-root>"), limit=300)
+            for warning in warnings
+        }
+    )
 
     return {
-        "name": package["name"],
-        "display_name": package["display_name"],
-        "profession": package["profession"],
+        "name": safe_identifier(package["name"]),
+        "display_name": sanitize_untrusted_text(package["display_name"]),
+        "profession": sanitize_untrusted_text(package["profession"]),
         "package_class": package["package_class"],
         "kind": package["kind"],
         "kind_source": package["kind_source"],
         "expert_type": package["expert_type"],
-        "version": package["version"],
-        "marketplace": package["marketplace"],
-        "package_root": package["package_root"],
-        "manifest_path": package["manifest_path"],
-        "lead_agent": package["lead_agent"],
-        "lead_path": package["lead_path"],
-        "agent_paths": package["agent_paths"],
+        "version": safe_identifier(package["version"]),
+        "marketplace": safe_identifier(package["marketplace"]),
+        "manifest_path": MANIFEST_RELATIVE.as_posix(),
+        "lead_agent": safe_identifier(package["lead_agent"]),
+        "lead_path": relative_package_path(package_root, package["lead_path"]),
+        "agent_paths": [relative_package_path(package_root, path) for path in package["agent_paths"]],
         "agent_count": package["agent_count"],
         "members": members,
-        "skill_paths": [str(path) for path in skills],
+        "skill_paths": [relative_package_path(package_root, path) for path in skills],
         "reference_roots": [
-            str(path)
+            relative_package_path(package_root, path)
             for candidate in (package_root / "references",)
             if candidate.is_dir()
             and (path := resolved_path_within(package_root, candidate)) is not None
         ],
         "dependencies": dependencies,
         "connector_ids": connector_ids,
-        "license": license_value if isinstance(license_value, str) else "",
-        "license_files": license_files,
-        "executable_files": sorted(executable_files),
-        "warnings": sorted(set(warnings)),
+        "license": safe_identifier(license_value) if isinstance(license_value, str) else "",
+        "license_files": [relative_package_path(package_root, path) for path in license_files],
+        "executable_files": sorted(relative_package_path(package_root, path) for path in executable_files),
+        "trust": trust_summary(report, include_findings=True),
+        "warnings": safe_warnings,
         "read_only": True,
     }
 
@@ -2023,6 +3193,97 @@ def filter_packages(packages: list[dict[str, Any]], args: argparse.Namespace) ->
     if args.query:
         result = [item for item in result if matches_query(item, args.query)]
     return result
+
+
+def _warning_code(value: Any) -> str:
+    text = str(value or "").casefold()
+    if "json-too-large" in text or "bounded read limit" in text:
+        return "json-too-large"
+    if "invalid json" in text or "root must be an object" in text:
+        return "invalid-json"
+    if (
+        "escape" in text
+        or "unsafe" in text
+        or "symlink" in text
+        or "outside" in text
+        or "absolute path" in text
+    ):
+        return "unsafe-path"
+    if "missing" in text or "not found" in text:
+        return "missing-content"
+    if "not readable" in text or "could not" in text or "permission" in text:
+        return "read-error"
+    if "unsupported experttype" in text:
+        return "unsupported-expert-type"
+    if "license" in text:
+        return "license-metadata-missing"
+    if "script" in text or "executable" in text or "hook" in text:
+        return "executable-content-present"
+    if "no declared experttype" in text:
+        return "undeclared-agent-package"
+    return "discovery-warning"
+
+
+def _project_public_warnings(values: Any) -> list[dict[str, str]]:
+    if not isinstance(values, list):
+        return []
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values[:200]:
+        code = _warning_code(value)
+        if code not in seen:
+            seen.add(code)
+            result.append({"code": code})
+    return result
+
+
+def _public_safe_string(value: str, *, key: str = "") -> str:
+    parsed = urllib.parse.urlparse(value)
+    if (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").casefold() in WORKBUDDY_OFFICIAL_HOSTS
+    ):
+        return value
+    path_key = (
+        key.endswith("_path")
+        or key.endswith("_paths")
+        or key.endswith("_root")
+        or key.endswith("_roots")
+        or key in {"config_path", "package_root", "source_roots"}
+    )
+    stripped = value.strip()
+    if (
+        WINDOWS_ABSOLUTE_PATH_RE.search(stripped)
+        or EMBEDDED_WINDOWS_PATH_RE.search(stripped)
+        or EMBEDDED_POSIX_LOCAL_PATH_RE.search(stripped)
+    ):
+        return "[redacted-local-path]"
+    if path_key and key != "official_ranking_endpoint" and stripped.startswith("/"):
+        return "[redacted-local-path]"
+    home_name = Path.home().name
+    projected = sanitize_untrusted_text(value, limit=500)
+    if home_name and len(home_name) >= 3:
+        projected = re.sub(re.escape(home_name), "[local-user]", projected, flags=re.IGNORECASE)
+    return projected
+
+
+def project_public_payload(value: Any, *, key: str = "") -> Any:
+    """Recursively enforce the no-local-path/no-untrusted-text public JSON boundary."""
+    if key == "warnings":
+        return _project_public_warnings(value)
+    if isinstance(value, dict):
+        return {
+            str(item_key): project_public_payload(item_value, key=str(item_key))
+            for item_key, item_value in value.items()
+            if not str(item_key).startswith("_")
+        }
+    if isinstance(value, list):
+        return [project_public_payload(item, key=key) for item in value]
+    if isinstance(value, tuple):
+        return [project_public_payload(item, key=key) for item in value]
+    if isinstance(value, str):
+        return _public_safe_string(value, key=key)
+    return value
 
 
 def emit(payload: dict[str, Any], as_json: bool) -> None:
@@ -2046,7 +3307,36 @@ def emit(payload: dict[str, Any], as_json: bool) -> None:
             )
     elif command == "catalog":
         for item in payload.get("items", []):
-            print("\t".join([item["id"], item["expert_type"], item["availability"], item["display_name"]]))
+            print(
+                "\t".join(
+                    [
+                        item["id"],
+                        item["expert_type"],
+                        item["availability"],
+                        item.get("trust_status", TRUST_UNKNOWN),
+                        item["display_name"],
+                    ]
+                )
+            )
+    elif command == "audit":
+        if "items" in payload:
+            for item in payload.get("items", []):
+                identity = item.get("package", {})
+                print(
+                    "\t".join(
+                        [
+                            str(identity.get("name") or "unknown"),
+                            str(item.get("trust_status") or TRUST_UNKNOWN),
+                            "complete" if item.get("scan_complete") is True else "incomplete-or-unavailable",
+                        ]
+                    )
+                )
+        else:
+            identity = payload.get("package", {})
+            print(
+                f"{identity.get('name') or 'unknown'}\t{payload.get('trust_status')}\t"
+                f"policy={payload.get('policy_version')}\tdigest={payload.get('content_digest') or 'unavailable'}"
+            )
     elif command == "recommend":
         if not payload.get("recommendations"):
             print("没有找到具备可解释元数据命中的 WorkBuddy 候选。")
@@ -2055,7 +3345,7 @@ def emit(payload: dict[str, Any], as_json: bool) -> None:
             latest = item["ranking_evidence"]["latest"]
             print(
                 f"{item['rank']}. {item['display_name']} ({item['id']}) "
-                f"[{item['expert_type']} | {item['availability']}]"
+                f"[{item['expert_type']} | {item['availability']} | {item['trust']['trust_status']}]"
             )
             print(f"   分类: {item['category']['name']} ({item['category']['id']})")
             print(f"   理由: {' '.join(item['recommendation_reasons'])}")
@@ -2127,6 +3417,20 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(inspect_parser)
     inspect_parser.add_argument("--marketplace", default="", help="Disambiguate by marketplace name")
 
+    audit = subparsers.add_parser(
+        "audit",
+        help="Audit one local package or return a bounded trust summary for discovered entries",
+    )
+    audit.add_argument(
+        "name",
+        nargs="?",
+        default="",
+        help="Optional exact package or catalog name for a full structured audit",
+    )
+    add_common(audit)
+    audit.add_argument("--marketplace", default="", help="Disambiguate installed packages")
+    audit.add_argument("--limit", type=int, default=DEFAULT_AUDIT_LIMIT)
+
     catalog = subparsers.add_parser("catalog", help="List cached expert metadata and local availability")
     add_common(catalog)
     catalog.add_argument("--query", default="", help="Case-insensitive metadata filter")
@@ -2137,6 +3441,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
     )
     catalog.add_argument("--limit", type=int, default=DEFAULT_CATALOG_LIMIT)
+    catalog.add_argument(
+        "--trust",
+        choices=("all",) + TRUST_STATUSES,
+        default="all",
+        help="Filter by package trust status without changing it",
+    )
 
     recommend = subparsers.add_parser(
         "recommend",
@@ -2149,6 +3459,12 @@ def build_parser() -> argparse.ArgumentParser:
     recommend.add_argument("--category", default="", help="Optional category id or display-name filter")
     recommend.add_argument("--top", type=int, default=DEFAULT_RECOMMEND_LIMIT)
     recommend.add_argument(
+        "--trust",
+        choices=("all",) + TRUST_STATUSES,
+        default=TRUST_ELIGIBLE,
+        help="Default eligible-only; choose another status or all only for explicit risk review",
+    )
+    recommend.add_argument(
         "--official-online",
         action="store_true",
         help="Probe fixed anonymous WorkBuddy first-party sources without reading or sending credentials",
@@ -2157,9 +3473,87 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
+def _run_internal(args: argparse.Namespace) -> dict[str, Any]:
     roots = existing_roots(args.root)
     packages, discovery_warnings = discover_packages(roots)
+
+    if args.command == "audit":
+        catalog, catalog_warnings = load_catalog(roots, packages)
+        if args.name:
+            package: dict[str, Any] | None
+            try:
+                package = select_package(packages, args.name, args.marketplace or None)
+            except BridgeError as exc:
+                if exc.code != "expert_not_found":
+                    raise
+                package = None
+            if package is not None:
+                report = package_trust(package)
+            else:
+                catalog_item = select_catalog_item(catalog, args.name)
+                if catalog_item is None:
+                    raise BridgeError(
+                        f"No installed package or catalog entry matches: {args.name}",
+                        code="expert_not_found",
+                    )
+                report = catalog_item.get("_trust_audit")
+                if not isinstance(report, dict):
+                    report = unknown_trust_report(
+                        {
+                            "name": safe_identifier(catalog_item.get("id")),
+                            "display_name": sanitize_untrusted_text(catalog_item.get("display_name")),
+                            "version": "",
+                            "marketplace": "catalog",
+                            "package_class": "metadata-only",
+                            "expert_type": catalog_item.get("expert_type") or None,
+                            "availability": catalog_item.get("availability"),
+                        }
+                    )
+            return {
+                "status": "ok",
+                "command": "audit",
+                "source_roots": [str(path) for path in roots],
+                **report,
+                "next_action": (
+                    "inspect"
+                    if report["trust_status"] == TRUST_ELIGIBLE
+                    else "explicit-user-review"
+                    if report["trust_status"] == TRUST_REVIEW_REQUIRED
+                    else "repair-and-reaudit"
+                    if report["trust_status"] == TRUST_QUARANTINED
+                    else "provide-local-package"
+                ),
+                "warnings": discovery_warnings + catalog_warnings,
+            }
+
+        limit = max(args.limit, 0)
+        summaries: list[dict[str, Any]] = []
+        counts = {status: 0 for status in TRUST_STATUSES}
+        for item in catalog:
+            report = item.get("_trust_audit")
+            if not isinstance(report, dict):
+                report = unknown_trust_report()
+            trust_status = str(report.get("trust_status") or TRUST_UNKNOWN)
+            counts[trust_status] = counts.get(trust_status, 0) + 1
+            summaries.append(
+                {
+                    "package": report.get("package", {}),
+                    **trust_summary(report),
+                }
+            )
+        return {
+            "status": "ok",
+            "command": "audit",
+            "policy_version": TRUST_POLICY_VERSION,
+            "source_roots": [str(path) for path in roots],
+            "total": len(summaries),
+            "returned": min(len(summaries), limit),
+            "truncated": len(summaries) > limit,
+            "counts": counts,
+            "items": summaries[:limit],
+            "read_only": True,
+            "warnings": discovery_warnings + catalog_warnings,
+        }
 
     if args.command == "doctor":
         catalog, catalog_warnings = load_catalog(roots, packages)
@@ -2277,6 +3671,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             availability=args.availability,
             category=args.category,
             limit=args.top,
+            trust=args.trust,
             official_online_probe=official_online_probe,
         )
         payload.update(
@@ -2298,16 +3693,38 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             package = None
 
         if package is not None:
-            if package["availability"] == INSTALLED_UNUSABLE:
+            report = package_trust(package)
+            if package["availability"] == INSTALLED_UNUSABLE or report["trust_status"] == TRUST_QUARANTINED:
                 return {
                     "status": "blocked",
                     "command": "resolve",
                     "source_roots": [str(path) for path in roots],
-                    "availability": INSTALLED_UNUSABLE,
-                    "match": compact_package_summary(package),
-                    "missing": ["readable local agent prompt Markdown"],
-                    "recovery_action": UNUSABLE_RECOVERY_ACTION,
-                    "next_action": "repair-in-workbuddy",
+                    "availability": package["availability"],
+                    "match": report["package"],
+                    "trust": trust_summary(report, include_findings=True),
+                    "missing": (
+                        ["readable local agent prompt Markdown"]
+                        if package["availability"] == INSTALLED_UNUSABLE
+                        else []
+                    ),
+                    "recovery_action": (
+                        UNUSABLE_RECOVERY_ACTION
+                        if package["availability"] == INSTALLED_UNUSABLE
+                        else report["recovery_action"]
+                    ),
+                    "next_action": "audit",
+                    "read_only": True,
+                    "warnings": discovery_warnings,
+                }
+            if report["trust_status"] == TRUST_REVIEW_REQUIRED:
+                return {
+                    "status": TRUST_REVIEW_REQUIRED,
+                    "command": "resolve",
+                    "source_roots": [str(path) for path in roots],
+                    "availability": INSTALLED,
+                    "match": report["package"],
+                    "trust": trust_summary(report, include_findings=True),
+                    "next_action": "audit",
                     "read_only": True,
                     "warnings": discovery_warnings,
                 }
@@ -2317,7 +3734,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "source_roots": [str(path) for path in roots],
                 "availability": "installed",
                 "match": compact_package_summary(package),
-                "next_action": "inspect",
+                "trust": trust_summary(report),
+                "next_action": "audit",
                 "read_only": True,
                 "warnings": discovery_warnings,
             }
@@ -2345,16 +3763,47 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if local_matches:
             usable_matches = [item for item in local_matches if item["agent_count"] > 0]
             if not usable_matches:
+                report = package_trust(local_matches[0])
                 return {
                     "status": "blocked",
                     "command": "resolve",
                     "source_roots": [str(path) for path in roots],
                     "availability": INSTALLED_UNUSABLE,
-                    "match": compact_package_summary(local_matches[0]),
+                    "match": report["package"],
                     "catalog_match": catalog_summary(catalog_item),
+                    "trust": trust_summary(report, include_findings=True),
                     "missing": ["readable local agent prompt Markdown"],
                     "recovery_action": UNUSABLE_RECOVERY_ACTION,
                     "next_action": "repair-in-workbuddy",
+                    "read_only": True,
+                    "warnings": discovery_warnings + catalog_warnings,
+                }
+            selected = usable_matches[0]
+            report = package_trust(selected)
+            if report["trust_status"] == TRUST_QUARANTINED:
+                return {
+                    "status": "blocked",
+                    "command": "resolve",
+                    "source_roots": [str(path) for path in roots],
+                    "availability": INSTALLED,
+                    "match": report["package"],
+                    "catalog_match": catalog_summary(catalog_item),
+                    "trust": trust_summary(report, include_findings=True),
+                    "recovery_action": report["recovery_action"],
+                    "next_action": "audit",
+                    "read_only": True,
+                    "warnings": discovery_warnings + catalog_warnings,
+                }
+            if report["trust_status"] == TRUST_REVIEW_REQUIRED:
+                return {
+                    "status": TRUST_REVIEW_REQUIRED,
+                    "command": "resolve",
+                    "source_roots": [str(path) for path in roots],
+                    "availability": INSTALLED,
+                    "match": report["package"],
+                    "catalog_match": catalog_summary(catalog_item),
+                    "trust": trust_summary(report, include_findings=True),
+                    "next_action": "audit",
                     "read_only": True,
                     "warnings": discovery_warnings + catalog_warnings,
                 }
@@ -2363,19 +3812,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "command": "resolve",
                 "source_roots": [str(path) for path in roots],
                 "availability": "installed",
-                "match": compact_package_summary(usable_matches[0]),
+                "match": compact_package_summary(selected),
                 "catalog_match": catalog_summary(catalog_item),
-                "next_action": "inspect",
+                "trust": trust_summary(report),
+                "next_action": "audit",
                 "read_only": True,
                 "warnings": discovery_warnings + catalog_warnings,
             }
 
+        metadata_report = catalog_item.get("_trust_audit")
+        if not isinstance(metadata_report, dict):
+            metadata_report = unknown_trust_report()
         return {
             "status": "blocked",
             "command": "resolve",
             "source_roots": [str(path) for path in roots],
             "availability": "metadata-only",
             "match": catalog_summary(catalog_item),
+            "trust": trust_summary(metadata_report),
             "missing": [
                 "local .codebuddy-plugin/plugin.json",
                 "readable local agent prompt Markdown",
@@ -2392,15 +3846,36 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.command == "inspect":
         package = select_package(packages, args.name, args.marketplace or None)
-        if package["availability"] == INSTALLED_UNUSABLE:
+        report = package_trust(package)
+        if package["availability"] == INSTALLED_UNUSABLE or report["trust_status"] == TRUST_QUARANTINED:
             return {
                 "status": "blocked",
                 "command": "inspect",
                 "source_roots": [str(path) for path in roots],
-                "availability": INSTALLED_UNUSABLE,
-                "expert": inspect_package(package),
-                "missing": ["readable local agent prompt Markdown"],
-                "recovery_action": UNUSABLE_RECOVERY_ACTION,
+                "availability": package["availability"],
+                "package": report["package"],
+                "trust": trust_summary(report, include_findings=True),
+                "missing": (
+                    ["readable local agent prompt Markdown"]
+                    if package["availability"] == INSTALLED_UNUSABLE
+                    else []
+                ),
+                "recovery_action": (
+                    UNUSABLE_RECOVERY_ACTION
+                    if package["availability"] == INSTALLED_UNUSABLE
+                    else report["recovery_action"]
+                ),
+                "warnings": discovery_warnings,
+            }
+        if report["trust_status"] == TRUST_REVIEW_REQUIRED:
+            return {
+                "status": TRUST_REVIEW_REQUIRED,
+                "command": "inspect",
+                "source_roots": [str(path) for path in roots],
+                "availability": INSTALLED,
+                "package": report["package"],
+                "trust": trust_summary(report, include_findings=True),
+                "recovery_action": report["recovery_action"],
                 "warnings": discovery_warnings,
             }
         return {
@@ -2408,6 +3883,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "command": "inspect",
             "source_roots": [str(path) for path in roots],
             "expert": inspect_package(package),
+            "trust": trust_summary(report),
             "warnings": discovery_warnings,
         }
 
@@ -2418,6 +3894,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             filtered = [item for item in filtered if item["expert_type"] == args.kind]
         if args.availability != "all":
             filtered = [item for item in filtered if item["availability"] == args.availability]
+        if args.trust != "all":
+            filtered = [item for item in filtered if item.get("trust_status") == args.trust]
         if args.query:
             filtered = [item for item in filtered if matches_query(item, args.query)]
         limit = max(args.limit, 0)
@@ -2434,6 +3912,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     raise BridgeError(f"Unsupported command: {args.command}", code="invalid_command")
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    return project_public_payload(_run_internal(args))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2454,7 +3936,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = run(args)
     except BridgeError as exc:
-        payload = {"status": "error", "error_code": exc.code, "message": str(exc)}
+        payload = project_public_payload(
+            {"status": "error", "error_code": exc.code, "message": str(exc)}
+        )
         emit(payload, as_json)
         return 3
 
