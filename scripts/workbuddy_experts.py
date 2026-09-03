@@ -125,7 +125,13 @@ AUDIT_TEXT_SUFFIXES = frozenset(
     }
 )
 
-URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+URL_RE = re.compile(
+    r"(?:https?://|weixin://|alipays://|data:image/)[^\s<>\"']+",
+    re.IGNORECASE,
+)
+ZERO_WIDTH_AND_INVISIBLE_RE = re.compile(
+    r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\u00ad\x00-\x08\x0b\x0c\x0e-\x1f]"
+)
 WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"(?i)(?:^[a-z]:[\\/]|^\\\\)")
 EMBEDDED_WINDOWS_PATH_RE = re.compile(
     r"(?i)(?:(?<![a-z0-9])[a-z]:[\\/]|\\\\[^\\\s]+[\\/])"
@@ -164,14 +170,15 @@ TRUST_RULE_PATTERNS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         FINDING_BLOCK,
         "sensitive-upload",
         re.compile(
-            r"(?:\bexfiltrate\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|files?|data|prompts?|history)\b|"
-            r"\b(?:upload|transmit)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history)\b|"
-            r"\b(?:send|post|forward)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history)\b.{0,100}\b(?:external|third[- ]party|server|endpoint|url|website|cloud|service)\b|"
-            r"\b(?:external|third[- ]party|server|endpoint|url|website|cloud|service)\b.{0,100}\b(?:send|post|forward)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history)\b|"
-            r"外传.{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|文件|数据|提示词|聊天记录)|"
-            r"上传.{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录)|"
-            r"(?:发送|提交|回传).{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录).{0,80}(?:外部|第三方|服务器|接口|网址|网站|云端|服务)|"
-            r"(?:外部|第三方|服务器|接口|网址|网站|云端|服务).{0,80}(?:发送|提交|回传).{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录))",
+            r"(?:\bexfiltrate\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|files?|data|prompts?|history|code|workspace|repo)\b|"
+            r"\b(?:upload|transmit)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history|code|workspace|repo|files?|context)\b|"
+            r"\b(?:send|post|forward)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history|code|workspace|repo|files?|context)\b.{0,100}\b(?:external|third[- ]party|server|endpoint|url|website|cloud|service|https?://)\b|"
+            r"\b(?:external|third[- ]party|server|endpoint|url|website|cloud|service|https?://)\b.{0,100}\b(?:send|post|forward)\b.{0,100}\b(?:private|sensitive|personal|credential|token|secret|customer\s+data|user\s+data|prompts?|history|code|workspace|repo|files?|context)\b|"
+            r"外传.{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|文件|数据|提示词|聊天记录|代码|工作区|仓库)|"
+            r"上传.{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录|代码|工作区|仓库|文件|上下文).{0,80}(?:外部|第三方|服务器|接口|网址|网站|云端|服务|https?://|至|到)|"
+            r"(?:发送|提交|回传|POST).{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录|代码|工作区|仓库|文件|上下文).{0,80}(?:外部|第三方|服务器|接口|网址|网站|云端|服务|https?://)|"
+            r"(?:外部|第三方|服务器|接口|网址|网站|云端|服务|https?://).{0,80}(?:发送|提交|回传|POST).{0,80}(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录|代码|工作区|仓库|文件|上下文)|"
+            r"(?:(?:将|把)(?:当前)?(?:隐私|敏感|个人|凭据|令牌|密钥|客户数据|用户数据|提示词|聊天记录|代码|工作区|仓库|文件|上下文).{0,80}(?:发送|提交|回传|外传|上传|POST).{0,80}(?:外部|第三方|服务器|接口|网址|网站|云端|服务|https?://|至|到)))",
             re.IGNORECASE,
         ),
     ),
@@ -180,10 +187,12 @@ TRUST_RULE_PATTERNS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         FINDING_BLOCK,
         "download-and-execute",
         re.compile(
-            r"(?:(?:\bcurl\b|\bwget\b|invoke-webrequest|\bdownload\b|\bfetch\b|下载).{0,180}"
-            r"(?:\bbash\b|\bsh\b|powershell|\bcmd\b|\bexecute\b|\bexec\b|\brun\b|\bsource\b|\beval\b|执行|运行)|"
-            r"(?:\bbash\b|\bsh\b|powershell|\bcmd\b|\bexecute\b|\bexec\b|\brun\b|执行|运行).{0,180}"
-            r"(?:\bcurl\b|\bwget\b|invoke-webrequest|\bdownload\b|下载))",
+            r"(?:(?:\bcurl\b|\bwget\b|invoke-webrequest|invoke-restmethod|\birm\b|\bdownload\b|\bfetch\b|下载).{0,180}"
+            r"(?:\bbash\b|\bsh\b|powershell|\biex\b|\bcmd\b|\bexecute\b|\bexec\b|\brun\b|\bsource\b|\beval\b|执行|运行)|"
+            r"(?:\bbash\b|\bsh\b|powershell|\biex\b|\bcmd\b|\bexecute\b|\bexec\b|\brun\b|执行|运行).{0,180}"
+            r"(?:\bcurl\b|\bwget\b|invoke-webrequest|invoke-restmethod|\birm\b|\bdownload\b|下载)|"
+            r"\bpython\s+-c\s+[\"'].*?\b(?:exec|eval)\b|"
+            r"\bcertutil(?:\.exe)?\s+-[a-z]*urlcache\b)",
             re.IGNORECASE,
         ),
     ),
@@ -192,8 +201,9 @@ TRUST_RULE_PATTERNS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         FINDING_REVIEW,
         "qr-gate",
         re.compile(
-            r"(?:(?:扫码|二维码|qr\s*code).{0,100}(?:登录|授权|充值|支付|login|auth|recharge|pay)|"
-            r"(?:登录|授权|充值|支付|login|auth|recharge|pay).{0,100}(?:扫码|二维码|qr\s*code))",
+            r"(?:(?:扫码|二维码|qr\s*code).{0,100}(?:登录|授权|充值|支付|进群|加入|获取|咨询|解锁|login|auth|recharge|pay|join)|"
+            r"(?:登录|授权|充值|支付|进群|加入|获取|咨询|解锁|login|auth|recharge|pay|join).{0,100}(?:扫码|二维码|qr\s*code)|"
+            r"weixin://[^\s<>\"']+|alipays://[^\s<>\"']+|data:image/[a-zA-Z0-9+]+;base64,[a-zA-Z0-9+/=]+)",
             re.IGNORECASE,
         ),
     ),
@@ -202,9 +212,9 @@ TRUST_RULE_PATTERNS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         FINDING_REVIEW,
         "payment-gate",
         re.compile(
-            r"(?:充值|付费解锁|付费后|购买后|开通会员|会员专享|消耗积分|积分不足|"
+            r"(?:充值|付费解锁|付费后|购买后|付费购买|开通会员|会员专享|VIP会员|消耗积分|积分不足|卡密|商业授权|"
             r"paywall|paid\s+plan|premium\s+required|top\s*up|credits?\s+required|membership\s+required|"
-            r"subscription\s+required)",
+            r"subscription\s+required|commercial\s+license)",
             re.IGNORECASE,
         ),
     ),
@@ -213,7 +223,9 @@ TRUST_RULE_PATTERNS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         FINDING_REVIEW,
         "tracked-link",
         re.compile(
-            r"(?:[?&](?:ref|referral|affiliate|source|utm_[a-z_]+)=|\baffiliate\b|邀请码|推广码|返利链接|"
+            r"(?:[?&](?:ref|referral|affiliate|source|channel|from|spm|promoter|tag|cps|invite_code|invite|coupon|utm_[a-z_]+)=|"
+            r"\b(?:https?://)?(?:t\.cn|bit\.ly|dwz\.cn|url\.cn|tinyurl\.com|b23\.tv|suo\.im|zws\.im)/[a-zA-Z0-9_\-]+|"
+            r"\baffiliate\b|邀请码|推广码|返利链接|渠道码|"
             r"(?:(?:配套阅读|推广链接|广告链接|赞助内容|优惠活动|专属福利|"
             r"promotional?\s+(?:link|resource)|sponsored\s+(?:link|content)).{0,180}https?://|"
             r"https?://.{0,180}(?:配套阅读|推广链接|广告链接|赞助内容|优惠活动|专属福利|"
@@ -226,10 +238,10 @@ TRUST_RULE_PATTERNS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         FINDING_REVIEW,
         "external-account-gate",
         re.compile(
-            r"(?:(?:\b(?:need|required|must)\b|需要|必须|请先).{0,100}"
-            r"(?:注册|登录|api[-_ ]?key|access[-_ ]?token|第三方账号)|"
-            r"(?:注册|登录|api[-_ ]?key|access[-_ ]?token|第三方账号).{0,100}"
-            r"(?:\b(?:need|required|must)\b|需要|必须|请先))",
+            r"(?:(?:\b(?:need|required|must|configure|provide|enter|supply|set)\b|需要|必须|请先|配置|设置|提供|输入|填入|填写).{0,100}"
+            r"(?:注册|登录|api[-_ ]?key|access[-_ ]?token|第三方账号|secret)|"
+            r"(?:注册|登录|api[-_ ]?key|access[-_ ]?token|第三方账号|secret).{0,100}"
+            r"(?:\b(?:need|required|must|configure|provide|enter|supply|set)\b|需要|必须|请先|配置|设置|提供|输入|填入|填写))",
             re.IGNORECASE,
         ),
     ),
@@ -239,8 +251,9 @@ TRUST_RULE_PATTERNS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         "social-diversion",
         re.compile(
             r"(?:(?:添加|加|加入|关注|私信|联系).{0,60}"
-            r"(?:微信|微信群|公众号|QQ|Telegram|Discord|社群)|"
-            r"(?:join|follow|contact|dm).{0,60}(?:wechat|telegram|discord|community))",
+            r"(?:微信|微信群|公众号|QQ|QQ群|Telegram|Discord|知识星球|企微|企业微信|飞书|飞书群|社群)|"
+            r"(?:join|follow|contact|dm).{0,60}(?:wechat|telegram|discord|community)|"
+            r"(?:(?:官方)?(?:微信|微信群|公众号|QQ群?|Telegram|Discord|知识星球|企微|企业微信|飞书群?|交流群|社群|读者群|VIP群))[：:\s]+[a-zA-Z0-9_\-\u4e00-\u9fa5]+)",
             re.IGNORECASE,
         ),
     ),
@@ -1365,21 +1378,31 @@ def _fallback_agent_audit_paths(
             _queue_audit_file(package_root, candidate, state)
 
 
+def _clean_obfuscation(text: str) -> str:
+    norm = unicodedata.normalize("NFKC", text)
+    cleaned = ZERO_WIDTH_AND_INVISIBLE_RE.sub("", norm)
+    cleaned = re.sub(r"<!--.*?-->", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"(\*\*|__)", "", cleaned)
+    cleaned = re.sub(r"(?<=\S)\*(?=\S)", "", cleaned)
+    return cleaned
+
+
 def _risk_match_details(text: str) -> list[tuple[str, str, str, int]]:
     matches: list[tuple[str, str, str, int]] = []
+    clean_text = _clean_obfuscation(text)
     for rule_id, severity, match_kind, pattern in TRUST_RULE_PATTERNS:
         # Block rules are deliberately fail-closed. Natural-language negation is
         # too ambiguous to safely exempt a match (for example, double negatives
         # such as "do not hesitate to ignore"). Benign safety prose may therefore
         # require review, but attack wording cannot become eligible by phrasing.
-        accepted = list(pattern.finditer(text))
+        accepted = list(pattern.finditer(clean_text))
         if not accepted:
             continue
         matches.extend((rule_id, severity, match_kind, match.start()) for match in accepted)
-    if URL_RE.search(text) and not any(
+    if (URL_RE.search(text) or URL_RE.search(clean_text)) and not any(
         severity != FINDING_NOTICE for _, severity, _, _ in matches
     ):
-        url_match = URL_RE.search(text)
+        url_match = URL_RE.search(text) or URL_RE.search(clean_text)
         if url_match is not None:
             matches.append(("external_link", FINDING_NOTICE, "external-link", url_match.start()))
     return matches
@@ -1537,6 +1560,18 @@ def audit_package(package: dict[str, Any]) -> dict[str, Any]:
                 state,
                 require_supported_text=True,
             )
+
+    for candidate in _bounded_directory_entries(package_root, package_root, state):
+        try:
+            if candidate.is_file() and candidate.suffix.casefold() in AUDIT_TEXT_SUFFIXES:
+                _queue_audit_file(package_root, candidate, state)
+        except OSError:
+            pass
+
+    for docs_directory_name in ("docs", "templates"):
+        docs_root = package_root / docs_directory_name
+        if docs_root.exists():
+            _walk_audit_path(package_root, docs_root, state)
 
     hasher = hashlib.sha256()
     total_bytes = 0
