@@ -206,7 +206,11 @@ class WorkBuddyExpertBridgeTests(unittest.TestCase):
         self.assertEqual("declared-expert", packages[0]["package_class"])
         self.assertEqual("team", packages[0]["expert_type"])
         self.assertEqual(2, packages[0]["agent_count"])
+        self.assertEqual(1, packages[0]["member_count"])
         self.assertTrue(packages[0]["lead_path"].endswith("team-alpha-lead.md"))
+
+        inspected = bridge.inspect_package(packages[0])
+        self.assertEqual([{"id": "team-alpha-dev"}], inspected["members"])
 
     def test_legacy_manifest_falls_back_to_direct_agent_markdown(self) -> None:
         self.write_package(
@@ -2094,6 +2098,96 @@ class WorkBuddyExpertBridgeTests(unittest.TestCase):
             self.assertEqual(bridge.TRUST_REVIEW_REQUIRED, report["trust_status"])
             rule_ids = {finding["rule_id"] for finding in report["findings"]}
             self.assertIn("qr_auth_or_payment", rule_ids)
+
+    def test_agent_package_does_not_impersonate_team_in_recommend(self) -> None:
+        self.write_package(
+            "multi-agent-plugin",
+            {
+                "name": "multi-agent-plugin",
+                "displayName": "多角色插件包",
+                "profession": "插件支持",
+                "description": "提供多角色支持插件",
+                "agents": ["./agents/planner.md", "./agents/coder.md"],
+            },
+            {
+                "planner.md": "# Planner\n",
+                "coder.md": "# Coder\n",
+            },
+        )
+        self.write_package(
+            "formal-team",
+            {
+                "name": "formal-team",
+                "displayName": "正式专家团",
+                "profession": "团队研发",
+                "description": "提供团队支持",
+                "expertType": "team",
+                "agentName": "team-lead",
+                "teamInfo": {"leadAgent": "team-lead", "memberAgents": ["team-member"]},
+                "agents": ["./agents/team-lead.md", "./agents/team-member.md"],
+            },
+            {
+                "team-lead.md": "# Team Lead\n",
+                "team-member.md": "# Team Member\n",
+            },
+        )
+
+        packages, _ = bridge.discover_packages([self.config])
+        catalog, _ = bridge.load_catalog([self.config], packages)
+
+        team_payload = bridge.recommend_catalog(
+            catalog,
+            "团队研发支持与多角色协作",
+            kind="team",
+            availability="all",
+            category="",
+            limit=5,
+            trust="all",
+        )
+        team_ids = [item["id"] for item in team_payload["recommendations"]]
+        self.assertIn("formal-team", team_ids)
+        self.assertNotIn("multi-agent-plugin", team_ids)
+
+        all_payload = bridge.recommend_catalog(
+            catalog,
+            "多角色插件支持",
+            kind="all",
+            availability="all",
+            category="",
+            limit=5,
+            trust="all",
+        )
+        matched_plugin = next(
+            item for item in all_payload["recommendations"] if item["id"] == "multi-agent-plugin"
+        )
+        self.assertEqual("undeclared", matched_plugin["expert_type"])
+        self.assertEqual("agent-package", matched_plugin["object_class"])
+        self.assertFalse(matched_plugin["formal_expert"])
+
+    def test_resolve_runtime_team_gives_ineligible_notice(self) -> None:
+        team_dir = self.config / "teams" / "archived-runtime-session"
+        team_dir.mkdir(parents=True)
+        (team_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "name": "archived-runtime-session",
+                    "description": "Historical session",
+                    "members": [{"name": "lead"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        parser = bridge.build_parser()
+        args = parser.parse_args(
+            ["resolve", "archived-runtime-session", "--root", str(self.config), "--json"]
+        )
+        payload = bridge._run_internal(args)
+
+        self.assertEqual("runtime-team-ineligible", payload["status"])
+        self.assertEqual("runtime-only", payload["availability"])
+        self.assertEqual("runtime-team", payload["match"]["object_class"])
+        self.assertIn("historical runtime team session", payload["recovery_action"])
 
 
 if __name__ == "__main__":

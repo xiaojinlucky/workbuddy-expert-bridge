@@ -37,7 +37,7 @@ Marketplace 也可能使用 `external_plugins/`。缓存 `manifest.json` 只是�
 | 类型 | `expertType` | 缺失时不猜正式类型；只按角色文件数报告单角色或多角色结构 |
 | 入口角色 | `agentName` | 单专家入口或团队主理人候选 |
 | 角色文件 | `agents` | 相对于专家包的路径数组 |
-| 团队结构 | `teamInfo` | `leadAgent` 与 `memberAgents` |
+| 团队结构 | `teamInfo` | `leadAgent` 与 `memberAgents`（与根层 `members` 合流提取角色） |
 | 展示信息 | `displayName`、`profession`、`description` | 用于搜索和解释 |
 | 成员 | `members` | `id`、`role` 与展示字段 |
 | 扩展能力 | `skills`、`dependencies`、`connectorIds` | 只声明依赖，不证明宿主已具备 |

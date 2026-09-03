@@ -1821,6 +1821,11 @@ def build_package(manifest_path: Path) -> dict[str, Any] | None:
                 lead_path = path
                 break
 
+    raw_members = data.get("members")
+    if not isinstance(raw_members, list) or not raw_members:
+        raw_members = team_info.get("memberAgents")
+    member_count = len(raw_members) if isinstance(raw_members, list) else 0
+
     package = {
         "name": name,
         "folder": package_root.name,
@@ -1840,7 +1845,7 @@ def build_package(manifest_path: Path) -> dict[str, Any] | None:
         "agent_paths": [str(path) for path in agents],
         "agent_count": len(agents),
         "availability": INSTALLED if agents else INSTALLED_UNUSABLE,
-        "member_count": len(data.get("members")) if isinstance(data.get("members"), list) else 0,
+        "member_count": member_count,
         "manifest_path": str(manifest_path.resolve()),
         "package_root": str(package_root),
         "warnings": path_warnings,
@@ -2120,7 +2125,11 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
         tags, search_tags = localized_list(manifest.get("tags"))
         category_id = str(package.get("category_id") or "")
         category = known_categories.get(category_id, {})
-        expert_type = str(package.get("expert_type") or package.get("kind") or "")
+        expert_type = (
+            str(package.get("expert_type") or "")
+            if package["package_class"] == DECLARED_EXPERT
+            else ""
+        )
         local_trust = package_trust(package)
         items.append(
             {
@@ -2131,7 +2140,7 @@ def load_catalog(roots: list[Path], installed: list[dict[str, Any]]) -> tuple[li
                 "expert_type_source": (
                     "manifest.expertType"
                     if package["package_class"] == DECLARED_EXPERT
-                    else "readable-agent-count (structural only; not an Expert Center declaration)"
+                    else "undeclared (plugin package without manifest.expertType)"
                 ),
                 "object_class": package["package_class"],
                 "formal_expert": package["package_class"] == DECLARED_EXPERT,
@@ -2799,7 +2808,7 @@ def recommend_catalog(
                     "id": safe_identifier(item["category_id"]),
                     "name": sanitize_untrusted_text(item["category_name"]),
                 },
-                "expert_type": item["expert_type"] if item.get("expert_type") in {"agent", "team"} else "unknown",
+                "expert_type": item["expert_type"] if item.get("expert_type") in {"agent", "team"} else ("undeclared" if item.get("object_class") == AGENT_PACKAGE else "unknown"),
                 "availability": item["availability"],
                 "availability_evidence": {
                     "local_package_classes": [
@@ -3172,7 +3181,11 @@ def inspect_package(package: dict[str, Any]) -> dict[str, Any]:
     if package["package_class"] == DECLARED_EXPERT and package["expert_type"] == "team" and not package["lead_path"]:
         warnings.append("Team lead file could not be resolved from teamInfo or agentName.")
 
-    members = project_members(manifest.get("members"))
+    team_info = manifest.get("teamInfo") if isinstance(manifest.get("teamInfo"), dict) else {}
+    raw_members = manifest.get("members")
+    if not isinstance(raw_members, list) or not raw_members:
+        raw_members = team_info.get("memberAgents")
+    members = project_members(raw_members)
     dependencies = project_dependencies(manifest.get("dependencies"))
     connector_ids = project_connector_ids(manifest.get("connectorIds"))
     report = package_trust(package)
@@ -3778,6 +3791,31 @@ def _run_internal(args: argparse.Namespace) -> dict[str, Any]:
         catalog, catalog_warnings = load_catalog(roots, packages)
         catalog_item = select_catalog_item(catalog, args.name)
         if catalog_item is None:
+            runtime_teams, runtime_warnings = load_runtime_teams(roots)
+            for rt in runtime_teams:
+                if (rt.get("name") or "").casefold() == args.name.casefold():
+                    return {
+                        "status": "runtime-team-ineligible",
+                        "command": "resolve",
+                        "source_roots": [str(path) for path in roots],
+                        "availability": "runtime-only",
+                        "match": {
+                            "name": safe_identifier(rt.get("name")),
+                            "object_class": "runtime-team",
+                            "folder": safe_identifier(rt.get("folder")),
+                        },
+                        "missing": ["installed package", "cached catalog metadata"],
+                        "next_steps": [
+                            "This identifier matches a historical runtime team session in teams/, which is not a reusable Expert Center package.",
+                            "Install or select a formal declared-expert package from the Expert Center.",
+                        ],
+                        "recovery_action": (
+                            "This identifier matches a historical runtime team session in teams/, which is not a reusable "
+                            "Expert Center package. To reuse experts, install or select a formal declared-expert package."
+                        ),
+                        "read_only": True,
+                        "warnings": discovery_warnings + catalog_warnings + runtime_warnings,
+                    }
             return {
                 "status": "not-found",
                 "command": "resolve",
